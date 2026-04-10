@@ -244,6 +244,14 @@ private:
 
     StreamingPreferences* m_Preferences;
     bool m_IsFullScreen;
+
+    // Multi-monitor state
+    bool m_MultiMonitorEnabled = false;
+    int m_MultiMonitorCount = 1;
+    int m_PerMonitorWidth = 0;
+    int m_PerMonitorHeight = 0;
+    QVector<SDL_Window*> m_MonitorWindows;
+    QVector<SDL_Renderer*> m_MonitorRenderers;
     SupportedVideoFormatList m_SupportedVideoFormats; // Sorted in order of descending priority
     STREAM_CONFIGURATION m_StreamConfig;
     DECODER_RENDERER_CALLBACKS m_VideoCallbacks;

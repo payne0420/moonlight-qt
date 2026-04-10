@@ -668,6 +668,86 @@ Flickable {
 
                 Label {
                     width: parent.width
+                    id: multiMonitorTitle
+                    text: qsTr("Multi-Monitor Streaming")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                }
+
+                Label {
+                    width: parent.width
+                    id: multiMonitorDesc
+                    text: qsTr("Stream across multiple monitors. The selected resolution applies to each monitor.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: 10
+
+                    CheckBox {
+                        id: multiMonitorCheck
+                        text: qsTr("Enable Multi-Monitor")
+                        checked: StreamingPreferences.multiMonitorEnabled
+                        onCheckedChanged: {
+                            StreamingPreferences.multiMonitorEnabled = checked
+                            if (!checked) {
+                                StreamingPreferences.multiMonitorCount = 1
+                            } else if (StreamingPreferences.multiMonitorCount < 2) {
+                                StreamingPreferences.multiMonitorCount = 2
+                                multiMonitorSpinBox.value = 2
+                            }
+                        }
+                    }
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: 10
+                    visible: multiMonitorCheck.checked
+
+                    Label {
+                        text: qsTr("Number of monitors:")
+                        font.pointSize: 9
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    SpinBox {
+                        id: multiMonitorSpinBox
+                        from: 2
+                        to: Math.max(2, SystemProperties.getMonitorCount())
+                        value: StreamingPreferences.multiMonitorCount > 1 ? StreamingPreferences.multiMonitorCount : 2
+                        onValueChanged: {
+                            StreamingPreferences.multiMonitorCount = value
+                        }
+                    }
+
+                    Button {
+                        text: qsTr("Auto-detect (%1)").arg(SystemProperties.getMonitorCount())
+                        onClicked: {
+                            var count = SystemProperties.getMonitorCount()
+                            if (count >= 2) {
+                                multiMonitorSpinBox.value = count
+                                StreamingPreferences.multiMonitorCount = count
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    width: parent.width
+                    visible: multiMonitorCheck.checked
+                    text: qsTr("Combined resolution: %1x%2").arg(
+                        StreamingPreferences.width * StreamingPreferences.multiMonitorCount).arg(
+                        StreamingPreferences.height)
+                    font.pointSize: 9
+                    font.italic: true
+                    wrapMode: Text.Wrap
+                }
+
+                Label {
+                    width: parent.width
                     id: bitrateTitle
                     text: qsTr("Video bitrate:")
                     font.pointSize: 12

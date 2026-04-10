@@ -170,7 +170,11 @@ public:
              bool localAudio,
              int gamepadMask,
              bool persistGameControllersOnDisconnect,
-             QString& rtspSessionUrl);
+             QString& rtspSessionUrl,
+             bool multiMonitor = false,
+             int monitorCount = 1,
+             int perMonitorWidth = 0,
+             int perMonitorHeight = 0);
 
     QVector<NvApp>
     getAppList();

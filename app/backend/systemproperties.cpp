@@ -268,3 +268,8 @@ void SystemProperties::refreshDisplays()
 
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
+
+int SystemProperties::getMonitorCount()
+{
+    return monitorNativeResolutions.count();
+}

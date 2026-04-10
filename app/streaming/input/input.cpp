@@ -251,6 +251,16 @@ void SdlInputHandler::setWindow(SDL_Window *window)
     m_Window = window;
 }
 
+void SdlInputHandler::setMultiMonitor(bool enabled, int count, int perMonitorWidth, int perMonitorHeight,
+                                       const QVector<SDL_Window*>& windows)
+{
+    m_MultiMonitorEnabled = enabled;
+    m_MultiMonitorCount = count;
+    m_PerMonitorWidth = perMonitorWidth;
+    m_PerMonitorHeight = perMonitorHeight;
+    m_MultiMonitorWindows = windows;
+}
+
 void SdlInputHandler::raiseAllKeys()
 {
     if (m_KeysDown.isEmpty()) {

@@ -101,6 +101,25 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         int windowWidth, windowHeight;
         SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
 
+        // Multi-monitor: determine which window the event came from and apply X offset
+        int multiMonitorXOffset = 0;
+        if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
+            // Find which monitor window contains the cursor and compute the X offset
+            for (int i = 0; i < m_MultiMonitorWindows.size(); i++) {
+                if (m_MultiMonitorWindows[i]) {
+                    SDL_GetWindowSize(m_MultiMonitorWindows[i], &windowWidth, &windowHeight);
+                    int wx, wy;
+                    SDL_GetWindowPosition(m_MultiMonitorWindows[i], &wx, &wy);
+                    int gx, gy;
+                    SDL_GetGlobalMouseState(&gx, &gy);
+                    if (gx >= wx && gx < wx + windowWidth && gy >= wy && gy < wy + windowHeight) {
+                        multiMonitorXOffset = i * m_PerMonitorWidth;
+                        break;
+                    }
+                }
+            }
+        }
+
         SDL_Rect src, dst;
         bool mouseInVideoRegion;
 
@@ -134,7 +153,13 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
             }
         }
         if (mouseInVideoRegion || m_MouseWasInVideoRegion || m_PendingMouseButtonsAllUpOnVideoRegionLeave) {
-            LiSendMousePositionEvent((short)x, (short)y, dst.w, dst.h);
+            if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
+                // In multi-monitor mode, send coordinates in the combined virtual desktop space.
+                // The x coordinate needs the monitor offset, and the destination width is the full combined stream width.
+                LiSendMousePositionEvent((short)(x + multiMonitorXOffset), (short)y, m_StreamWidth, m_StreamHeight);
+            } else {
+                LiSendMousePositionEvent((short)x, (short)y, dst.w, dst.h);
+            }
         }
 
         // Adjust the cursor visibility if applicable

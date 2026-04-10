@@ -194,12 +194,23 @@ NvHTTP::startApp(QString verb,
                  bool localAudio,
                  int gamepadMask,
                  bool persistGameControllersOnDisconnect,
-                 QString& rtspSessionUrl)
+                 QString& rtspSessionUrl,
+                 bool multiMonitor,
+                 int monitorCount,
+                 int perMonitorWidth,
+                 int perMonitorHeight)
 {
     int riKeyId;
 
     memcpy(&riKeyId, streamConfig->remoteInputAesIv, sizeof(riKeyId));
     riKeyId = qFromBigEndian(riKeyId);
+
+    QString multiMonitorParams;
+    if (multiMonitor && monitorCount > 1) {
+        multiMonitorParams = "&multiMonitor="+QString::number(monitorCount)+
+                             "&perMonitorWidth="+QString::number(perMonitorWidth)+
+                             "&perMonitorHeight="+QString::number(perMonitorHeight);
+    }
 
     QString response =
             openConnectionToString(m_BaseUrlHttps,
@@ -223,6 +234,7 @@ NvHTTP::startApp(QString verb,
                                    "&remoteControllersBitmap="+QString::number(gamepadMask)+
                                    "&gcmap="+QString::number(gamepadMask)+
                                    "&gcpersist="+QString::number(persistGameControllersOnDisconnect ? 1 : 0)+
+                                   multiMonitorParams+
                                    LiGetLaunchUrlQueryParameters(),
                                    LAUNCH_TIMEOUT_MS);
 

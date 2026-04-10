@@ -633,8 +633,26 @@ bool Session::initialize(QQuickWindow* qtWindow)
     }
 
     LiInitializeStreamConfiguration(&m_StreamConfig);
-    m_StreamConfig.width = m_Preferences->width;
-    m_StreamConfig.height = m_Preferences->height;
+
+    // Multi-monitor: compute combined resolution
+    if (m_Preferences->multiMonitorEnabled && m_Preferences->multiMonitorCount > 1) {
+        m_MultiMonitorEnabled = true;
+        m_MultiMonitorCount = m_Preferences->multiMonitorCount;
+        m_PerMonitorWidth = m_Preferences->width;
+        m_PerMonitorHeight = m_Preferences->height;
+        m_StreamConfig.width = m_Preferences->width * m_Preferences->multiMonitorCount;
+        m_StreamConfig.height = m_Preferences->height;
+        qInfo() << "Multi-monitor enabled:" << m_MultiMonitorCount << "monitors at"
+                << m_PerMonitorWidth << "x" << m_PerMonitorHeight
+                << "combined:" << m_StreamConfig.width << "x" << m_StreamConfig.height;
+    } else {
+        m_MultiMonitorEnabled = false;
+        m_MultiMonitorCount = 1;
+        m_PerMonitorWidth = m_Preferences->width;
+        m_PerMonitorHeight = m_Preferences->height;
+        m_StreamConfig.width = m_Preferences->width;
+        m_StreamConfig.height = m_Preferences->height;
+    }
 
     int x, y, width, height;
     getWindowDimensions(x, y, width, height);
@@ -1595,7 +1613,11 @@ bool Session::startConnectionAsync()
                       m_Preferences->playAudioOnHost,
                       m_InputHandler->getAttachedGamepadMask(),
                       !m_Preferences->multiController,
-                      rtspSessionUrl);
+                      rtspSessionUrl,
+                      m_MultiMonitorEnabled,
+                      m_MultiMonitorCount,
+                      m_PerMonitorWidth,
+                      m_PerMonitorHeight);
     } catch (const GfeHttpResponseException& e) {
         emit displayLaunchError(tr("Host returned error: %1").arg(e.toQString()));
         return false;
@@ -1853,7 +1875,55 @@ void Session::exec()
         }
     }
 
+    // Multi-monitor: create additional windows for each extra monitor
+    if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
+        m_MonitorWindows.append(m_Window);
+        int numDisplays = SDL_GetNumVideoDisplays();
+
+        for (int i = 1; i < m_MultiMonitorCount && i < numDisplays; i++) {
+            std::string extraWindowName = windowName + " (" + std::to_string(i + 1) + ")";
+            int dx = SDL_WINDOWPOS_CENTERED_DISPLAY(i);
+            int dy = SDL_WINDOWPOS_CENTERED_DISPLAY(i);
+
+            SDL_Window* extraWin = SDL_CreateWindow(
+                extraWindowName.c_str(),
+                dx, dy,
+                m_PerMonitorWidth, m_PerMonitorHeight,
+                defaultWindowFlags | StreamUtils::getPlatformWindowFlags());
+
+            if (!extraWin) {
+                // Fallback without platform flags
+                extraWin = SDL_CreateWindow(
+                    extraWindowName.c_str(),
+                    dx, dy,
+                    m_PerMonitorWidth, m_PerMonitorHeight,
+                    defaultWindowFlags);
+            }
+
+            if (extraWin) {
+                m_MonitorWindows.append(extraWin);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "Created multi-monitor window %d on display %d", i + 1, i);
+            } else {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Failed to create multi-monitor window %d: %s", i + 1, SDL_GetError());
+            }
+        }
+
+        qInfo() << "Multi-monitor: created" << m_MonitorWindows.size() << "windows";
+    }
+
     m_InputHandler->setWindow(m_Window);
+
+    // Set multi-monitor state on input handler
+    if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
+        m_InputHandler->setMultiMonitor(
+            m_MultiMonitorEnabled,
+            m_MultiMonitorCount,
+            m_PerMonitorWidth,
+            m_PerMonitorHeight,
+            m_MonitorWindows);
+    }
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
     QImage svgImage(ICON_SIZE, ICON_SIZE, QImage::Format_RGBA8888);
@@ -2337,6 +2407,15 @@ DispatchDeferredCleanup:
         }
 #endif
     }
+
+    // Destroy multi-monitor extra windows first
+    for (int i = 1; i < m_MonitorWindows.size(); i++) {
+        if (m_MonitorWindows[i]) {
+            SDL_DestroyWindow(m_MonitorWindows[i]);
+        }
+    }
+    m_MonitorWindows.clear();
+    m_MonitorRenderers.clear();
 
     // This must be called after the decoder is deleted, because
     // the renderer may want to interact with the window
