@@ -2011,13 +2011,9 @@ void Session::exec()
             m_PerMonitorHeight,
             m_MonitorWindows);
 
-        // Pass extra windows to the video decoder/renderer now that they exist.
-        // The decoder was created before exec() so it didn't have them at init time.
-        if (m_VideoDecoder && !m_MonitorWindows.isEmpty()) {
-            m_VideoDecoder->setMultiMonitorWindows(m_MonitorWindows,
-                                                    m_PerMonitorWidth,
-                                                    m_PerMonitorHeight);
-        }
+        // With multi-stream region splitting, each stream arrives at per-monitor
+        // resolution, so the old client-side frame splitting (setMultiMonitorWindows)
+        // is no longer needed. Each stream has its own decoder rendering to its own window.
     }
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
@@ -2398,12 +2394,8 @@ void Session::exec()
                 }
             }
 
-            // Set up multi-monitor rendering on the newly created decoder
-            if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1 && !m_MonitorWindows.isEmpty()) {
-                m_VideoDecoder->setMultiMonitorWindows(m_MonitorWindows,
-                                                        m_PerMonitorWidth,
-                                                        m_PerMonitorHeight);
-            }
+            // With multi-stream region splitting, each stream's decoder renders directly
+            // to its own window at per-monitor resolution. No client-side splitting needed.
 
             // Create decoders for secondary multi-monitor streams
             if (m_MultiMonitorCount > 1 && !m_VideoStreams.isEmpty()) {
