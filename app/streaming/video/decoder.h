@@ -83,4 +83,8 @@ public:
     virtual void renderFrameOnMainThread() = 0;
     virtual void setHdrMode(bool enabled) = 0;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) = 0;
+    virtual void setMultiMonitorWindows(const QVector<SDL_Window*>& windows,
+                                        int perMonitorWidth, int perMonitorHeight) {
+        Q_UNUSED(windows); Q_UNUSED(perMonitorWidth); Q_UNUSED(perMonitorHeight);
+    }
 };

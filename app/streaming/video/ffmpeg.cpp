@@ -2129,3 +2129,13 @@ void FFmpegVideoDecoder::renderFrameOnMainThread()
     m_Pacer->renderOnMainThread();
 }
 
+void FFmpegVideoDecoder::setMultiMonitorWindows(const QVector<SDL_Window*>& windows,
+                                                 int perMonitorWidth, int perMonitorHeight)
+{
+    // Forward to the frontend renderer if it supports multi-monitor
+    auto* sdlRenderer = dynamic_cast<SdlRenderer*>(m_FrontendRenderer);
+    if (sdlRenderer) {
+        sdlRenderer->setMultiMonitorWindows(windows, perMonitorWidth, perMonitorHeight);
+    }
+}
+

@@ -1924,7 +1924,7 @@ void Session::exec()
 
     m_InputHandler->setWindow(m_Window);
 
-    // Set multi-monitor state on input handler
+    // Set multi-monitor state on input handler and video decoder
     if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
         m_InputHandler->setMultiMonitor(
             m_MultiMonitorEnabled,
@@ -1932,6 +1932,14 @@ void Session::exec()
             m_PerMonitorWidth,
             m_PerMonitorHeight,
             m_MonitorWindows);
+
+        // Pass extra windows to the video decoder/renderer now that they exist.
+        // The decoder was created before exec() so it didn't have them at init time.
+        if (m_VideoDecoder && !m_MonitorWindows.isEmpty()) {
+            m_VideoDecoder->setMultiMonitorWindows(m_MonitorWindows,
+                                                    m_PerMonitorWidth,
+                                                    m_PerMonitorHeight);
+        }
     }
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
