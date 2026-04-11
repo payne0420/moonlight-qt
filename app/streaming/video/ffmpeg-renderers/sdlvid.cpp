@@ -46,6 +46,14 @@ SdlRenderer::~SdlRenderer()
     av_frame_free(&m_RgbFrame);
     sws_freeContext(m_SwsContext);
 
+    // Clean up extra monitor renderers/textures
+    for (auto& em : m_ExtraMonitors) {
+        if (em.texture) SDL_DestroyTexture(em.texture);
+        if (em.renderer) SDL_DestroyRenderer(em.renderer);
+        // Windows are owned by Session, not us
+    }
+    m_ExtraMonitors.clear();
+
     if (m_Texture != nullptr) {
         SDL_DestroyTexture(m_Texture);
     }
@@ -53,6 +61,38 @@ SdlRenderer::~SdlRenderer()
     if (m_Renderer != nullptr) {
         SDL_DestroyRenderer(m_Renderer);
     }
+}
+
+void SdlRenderer::setMultiMonitorWindows(const QVector<SDL_Window*>& windows,
+                                          int perMonitorWidth, int perMonitorHeight)
+{
+    m_PerMonitorWidth = perMonitorWidth;
+    m_PerMonitorHeight = perMonitorHeight;
+    m_MonitorCount = 1 + windows.size();  // primary + extras
+
+    for (auto& em : m_ExtraMonitors) {
+        if (em.texture) SDL_DestroyTexture(em.texture);
+        if (em.renderer) SDL_DestroyRenderer(em.renderer);
+    }
+    m_ExtraMonitors.clear();
+
+    for (SDL_Window* win : windows) {
+        ExtraMonitor em;
+        em.window = win;
+        em.renderer = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
+        if (!em.renderer) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "Failed to create renderer for extra monitor: %s", SDL_GetError());
+            em.renderer = SDL_CreateRenderer(win, -1, 0);
+        }
+        // Texture will be created on first frame when we know the pixel format
+        em.texture = nullptr;
+        m_ExtraMonitors.append(em);
+    }
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Multi-monitor rendering: %d windows, %dx%d per monitor",
+                m_MonitorCount, m_PerMonitorWidth, m_PerMonitorHeight);
 }
 
 bool SdlRenderer::prepareDecoderContext(AVCodecContext*, AVDictionary**)
@@ -217,6 +257,13 @@ bool SdlRenderer::initialize(PDECODER_PARAMETERS params)
     if (!m_Renderer) {
         m_InitFailureReason = InitFailureReason::NoSoftwareSupport;
         return false;
+    }
+
+    // Set up multi-monitor rendering if extra windows were provided
+    if (!params->extraMonitorWindows.isEmpty() && params->perMonitorWidth > 0) {
+        setMultiMonitorWindows(params->extraMonitorWindows,
+                               params->perMonitorWidth,
+                               params->perMonitorHeight);
     }
 
     return true;
@@ -563,26 +610,36 @@ ReadbackRetry:
 
     SDL_RenderClear(m_Renderer);
 
-    // Calculate the video region size, scaling to fill the output size while
-    // preserving the aspect ratio of the video stream.
-    SDL_Rect src, dst;
-    src.x = src.y = 0;
-    src.w = frame->width;
-    src.h = frame->height;
-    dst.x = dst.y = 0;
-    SDL_GetRendererOutputSize(m_Renderer, &dst.w, &dst.h);
-    StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+    {
+        // For multi-monitor, the primary window shows only its portion of the combined frame.
+        // For single-monitor, srcRect is the entire frame (same as before).
+        SDL_Rect srcRect;
+        srcRect.x = 0;
+        srcRect.y = 0;
+        srcRect.w = (m_MonitorCount > 1) ? m_PerMonitorWidth : frame->width;
+        srcRect.h = (m_MonitorCount > 1) ? m_PerMonitorHeight : frame->height;
 
-    // Ensure the viewport is set to the desired video region
-    SDL_RenderSetViewport(m_Renderer, &dst);
+        // Calculate the video region size, scaling to fill the output size while
+        // preserving the aspect ratio of the video stream.
+        SDL_Rect src, dst;
+        src.x = src.y = 0;
+        src.w = srcRect.w;
+        src.h = srcRect.h;
+        dst.x = dst.y = 0;
+        SDL_GetRendererOutputSize(m_Renderer, &dst.w, &dst.h);
+        StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
 
-    // Use nearest pixel sampling if the video region size is a multiple of the frame size
-    SDL_SetTextureScaleMode(m_Texture,
-                            dst.w % frame->width == 0 && dst.h % frame->height == 0 ?
-                                SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+        // Ensure the viewport is set to the desired video region
+        SDL_RenderSetViewport(m_Renderer, &dst);
 
-    // Draw the video content itself
-    SDL_RenderCopy(m_Renderer, m_Texture, nullptr, nullptr);
+        // Use nearest pixel sampling if the video region size is a multiple of the source size
+        SDL_SetTextureScaleMode(m_Texture,
+                                dst.w % srcRect.w == 0 && dst.h % srcRect.h == 0 ?
+                                    SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+
+        // Draw the primary monitor's portion of the video
+        SDL_RenderCopy(m_Renderer, m_Texture, &srcRect, nullptr);
+    }
 
     // Reset the viewport to the full window for overlay rendering
     SDL_RenderSetViewport(m_Renderer, nullptr);
@@ -594,9 +651,104 @@ ReadbackRetry:
 
     SDL_RenderPresent(m_Renderer);
 
+    // Render extra monitor windows
+    if (m_MonitorCount > 1) {
+        renderExtraMonitors(frame);
+    }
+
 Exit:
     if (swFrame != nullptr) {
         av_frame_free(&swFrame);
+    }
+}
+
+void SdlRenderer::renderExtraMonitors(AVFrame* frame)
+{
+    for (int i = 0; i < m_ExtraMonitors.size(); i++) {
+        auto& em = m_ExtraMonitors[i];
+        if (!em.renderer) continue;
+
+        int monitorIndex = i + 1;  // extra monitors start at index 1
+
+        // Recreate texture if needed (first frame or format change)
+        if (!em.texture) {
+            Uint32 pixelFormat;
+            switch (frame->format) {
+            case AV_PIX_FMT_YUV420P:
+            case AV_PIX_FMT_YUVJ420P:
+                pixelFormat = SDL_PIXELFORMAT_YV12;
+                break;
+            case AV_PIX_FMT_NV12:
+                pixelFormat = SDL_PIXELFORMAT_NV12;
+                break;
+            case AV_PIX_FMT_NV21:
+                pixelFormat = SDL_PIXELFORMAT_NV21;
+                break;
+            default:
+                pixelFormat = SDL_PIXELFORMAT_XRGB8888;
+                break;
+            }
+
+            em.texture = SDL_CreateTexture(em.renderer,
+                                           pixelFormat,
+                                           SDL_TEXTUREACCESS_STREAMING,
+                                           frame->width, frame->height);
+            if (!em.texture) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Failed to create texture for extra monitor %d: %s",
+                            monitorIndex + 1, SDL_GetError());
+                continue;
+            }
+            SDL_SetTextureBlendMode(em.texture, SDL_BLENDMODE_NONE);
+        }
+
+        // Upload the full combined frame to this monitor's texture
+        // (same data as the primary texture, SDL textures are per-renderer)
+        switch (frame->format) {
+        case AV_PIX_FMT_YUV420P:
+        case AV_PIX_FMT_YUVJ420P:
+            SDL_UpdateYUVTexture(em.texture, nullptr,
+                                 frame->data[0], frame->linesize[0],
+                                 frame->data[1], frame->linesize[1],
+                                 frame->data[2], frame->linesize[2]);
+            break;
+        case AV_PIX_FMT_NV12:
+        case AV_PIX_FMT_NV21:
+#if SDL_VERSION_ATLEAST(2, 0, 15)
+            SDL_UpdateNVTexture(em.texture, nullptr,
+                                frame->data[0], frame->linesize[0],
+                                frame->data[1], frame->linesize[1]);
+#endif
+            break;
+        default:
+            // For RGB or other formats, the primary renderer handles conversion.
+            // We skip extra monitors for unsupported formats.
+            continue;
+        }
+
+        // Source rect: this monitor's horizontal slice of the combined frame
+        SDL_Rect srcRect;
+        srcRect.x = monitorIndex * m_PerMonitorWidth;
+        srcRect.y = 0;
+        srcRect.w = m_PerMonitorWidth;
+        srcRect.h = m_PerMonitorHeight;
+
+        SDL_RenderClear(em.renderer);
+
+        // Scale to fill the window while preserving aspect ratio
+        SDL_Rect src, dst;
+        src.x = src.y = 0;
+        src.w = m_PerMonitorWidth;
+        src.h = m_PerMonitorHeight;
+        dst.x = dst.y = 0;
+        SDL_GetRendererOutputSize(em.renderer, &dst.w, &dst.h);
+        StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+
+        SDL_RenderSetViewport(em.renderer, &dst);
+        SDL_SetTextureScaleMode(em.texture, SDL_ScaleModeLinear);
+        SDL_RenderCopy(em.renderer, em.texture, &srcRect, nullptr);
+        SDL_RenderSetViewport(em.renderer, nullptr);
+        SDL_RenderPresent(em.renderer);
     }
 }
 

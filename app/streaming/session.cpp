@@ -295,6 +295,9 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
     params.enableFramePacing = enableFramePacing;
     params.testOnly = testOnly;
     params.vds = vds;
+    params.extraMonitorWindows = m_MonitorWindows;
+    params.perMonitorWidth = m_PerMonitorWidth;
+    params.perMonitorHeight = m_PerMonitorHeight;
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "V-sync %s",
@@ -1875,61 +1878,55 @@ void Session::exec()
         }
     }
 
-    // Multi-monitor: position the single window to span all target physical displays.
-    // The server sends a combined-resolution stream (e.g. 3840x1080 for 2x1920x1080)
-    // and this window displays the full frame, naturally spanning monitors.
+    // Multi-monitor: create a fullscreen window on each target display.
+    // The server sends a combined-resolution stream (e.g. 5760x1080 for 3x1920x1080).
+    // Each window shows its horizontal slice of the combined frame.
     if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
         int numDisplays = SDL_GetNumVideoDisplays();
-        if (numDisplays >= m_MultiMonitorCount) {
-            // Compute bounding rect across the target displays
-            SDL_Rect combinedBounds = {};
-            bool first = true;
-            for (int i = 0; i < m_MultiMonitorCount && i < numDisplays; i++) {
-                SDL_Rect displayBounds;
-                if (SDL_GetDisplayBounds(i, &displayBounds) == 0) {
-                    if (first) {
-                        combinedBounds = displayBounds;
-                        first = false;
-                    } else {
-                        int minX = qMin(combinedBounds.x, displayBounds.x);
-                        int minY = qMin(combinedBounds.y, displayBounds.y);
-                        int maxX = qMax(combinedBounds.x + combinedBounds.w,
-                                        displayBounds.x + displayBounds.w);
-                        int maxY = qMax(combinedBounds.y + combinedBounds.h,
-                                        displayBounds.y + displayBounds.h);
-                        combinedBounds.x = minX;
-                        combinedBounds.y = minY;
-                        combinedBounds.w = maxX - minX;
-                        combinedBounds.h = maxY - minY;
-                    }
-                }
+
+        for (int i = 1; i < m_MultiMonitorCount && i < numDisplays; i++) {
+            std::string extraWindowName = windowName + " (" + std::to_string(i + 1) + ")";
+            int dx = SDL_WINDOWPOS_CENTERED_DISPLAY(i);
+            int dy = SDL_WINDOWPOS_CENTERED_DISPLAY(i);
+
+            SDL_Window* extraWin = SDL_CreateWindow(
+                extraWindowName.c_str(),
+                dx, dy,
+                m_PerMonitorWidth, m_PerMonitorHeight,
+                defaultWindowFlags | StreamUtils::getPlatformWindowFlags());
+
+            if (!extraWin) {
+                extraWin = SDL_CreateWindow(
+                    extraWindowName.c_str(),
+                    dx, dy,
+                    m_PerMonitorWidth, m_PerMonitorHeight,
+                    defaultWindowFlags);
             }
 
-            // Reposition the primary window to span the combined display area
-            SDL_SetWindowPosition(m_Window, combinedBounds.x, combinedBounds.y);
-            SDL_SetWindowSize(m_Window, combinedBounds.w, combinedBounds.h);
-            SDL_SetWindowBordered(m_Window, SDL_FALSE);
-
-            qInfo() << "Multi-monitor: spanning" << m_MultiMonitorCount
-                    << "displays, window bounds:" << combinedBounds.x << ","
-                    << combinedBounds.y << combinedBounds.w << "x" << combinedBounds.h;
-        } else {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                        "Multi-monitor requested %d displays but only %d available",
-                        m_MultiMonitorCount, numDisplays);
+            if (extraWin) {
+                m_MonitorWindows.append(extraWin);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "Created multi-monitor window %d on display %d", i + 1, i);
+            } else {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "Failed to create multi-monitor window %d: %s", i + 1, SDL_GetError());
+            }
         }
+
+        qInfo() << "Multi-monitor: created" << (1 + m_MonitorWindows.size())
+                << "windows for" << m_MultiMonitorCount << "monitors";
     }
 
     m_InputHandler->setWindow(m_Window);
 
-    // Set multi-monitor state on input handler (single spanning window mode)
+    // Set multi-monitor state on input handler
     if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
         m_InputHandler->setMultiMonitor(
             m_MultiMonitorEnabled,
             m_MultiMonitorCount,
             m_PerMonitorWidth,
             m_PerMonitorHeight,
-            {});  // No extra windows; single spanning window handles rendering
+            m_MonitorWindows);
     }
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
@@ -2415,8 +2412,8 @@ DispatchDeferredCleanup:
 #endif
     }
 
-    // Destroy multi-monitor extra windows first
-    for (int i = 1; i < m_MonitorWindows.size(); i++) {
+    // Destroy multi-monitor extra windows (renderers/textures are owned by SdlRenderer)
+    for (int i = 0; i < m_MonitorWindows.size(); i++) {
         if (m_MonitorWindows[i]) {
             SDL_DestroyWindow(m_MonitorWindows[i]);
         }

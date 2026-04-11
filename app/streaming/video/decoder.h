@@ -4,6 +4,8 @@
 #include "SDL_compat.h"
 #include "settings/streamingpreferences.h"
 
+#include <QVector>
+
 #define SDL_CODE_FRAME_READY 0
 
 #define MAX_SLICES 4
@@ -44,6 +46,11 @@ typedef struct _DECODER_PARAMETERS {
     bool enableVsync;
     bool enableFramePacing;
     bool testOnly;
+
+    // Multi-monitor: extra windows (one per additional monitor beyond primary)
+    QVector<SDL_Window*> extraMonitorWindows;
+    int perMonitorWidth;
+    int perMonitorHeight;
 } DECODER_PARAMETERS, *PDECODER_PARAMETERS;
 
 #define WINDOW_STATE_CHANGE_SIZE 0x01

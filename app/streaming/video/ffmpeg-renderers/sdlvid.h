@@ -3,6 +3,8 @@
 #include "renderer.h"
 #include "swframemapper.h"
 
+#include <QVector>
+
 #ifdef HAVE_CUDA
 #include "cuda.h"
 #endif
@@ -24,8 +26,13 @@ public:
     virtual bool testRenderFrame(AVFrame* frame) override;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO) override;
 
+    // Multi-monitor: set extra windows that each display a horizontal slice of the frame
+    void setMultiMonitorWindows(const QVector<SDL_Window*>& windows,
+                                int perMonitorWidth, int perMonitorHeight);
+
 private:
     void renderOverlay(Overlay::OverlayType type);
+    void renderExtraMonitors(AVFrame* frame);
 
     static void ffNoopFree(void *opaque, uint8_t *data);
 
@@ -41,6 +48,17 @@ private:
     AVFrame* m_RgbFrame;
 
     SwFrameMapper m_SwFrameMapper;
+
+    // Multi-monitor extra windows (index 0 = second monitor, etc.)
+    struct ExtraMonitor {
+        SDL_Window* window = nullptr;
+        SDL_Renderer* renderer = nullptr;
+        SDL_Texture* texture = nullptr;
+    };
+    QVector<ExtraMonitor> m_ExtraMonitors;
+    int m_PerMonitorWidth = 0;
+    int m_PerMonitorHeight = 0;
+    int m_MonitorCount = 1;  // total monitors including primary
 
 #ifdef HAVE_CUDA
     CUDAGLInteropHelper* m_CudaGLHelper;
