@@ -259,9 +259,10 @@ void SdlInputHandler::setMultiMonitor(bool enabled, int count, int perMonitorWid
     m_PerMonitorWidth = perMonitorWidth;
     m_PerMonitorHeight = perMonitorHeight;
     m_MultiMonitorWindows = windows;
-    // Default active window is the primary (m_Window), not the first extra window.
+    // Default active window is the first visible monitor window.
+    // m_Window may be hidden when multi-monitor is active (used only as the decoder's render target).
     // getWindowForEvent() will switch m_ActiveWindow when events arrive from other windows.
-    m_ActiveWindow = m_Window;
+    m_ActiveWindow = windows.isEmpty() ? m_Window : windows[0];
 }
 
 SDL_Window* SdlInputHandler::getActiveWindow()
@@ -275,18 +276,15 @@ SDL_Window* SdlInputHandler::getActiveWindow()
 SDL_Window* SdlInputHandler::getWindowForEvent(Uint32 windowID)
 {
     if (m_MultiMonitorEnabled) {
-        // Check if the event is from the primary window
-        if (m_Window && SDL_GetWindowID(m_Window) == windowID) {
-            m_ActiveWindow = m_Window;
-            return m_Window;
-        }
-        // Check extra monitor windows
+        // Check all visible monitor windows
         for (int i = 0; i < m_MultiMonitorWindows.size(); i++) {
             if (m_MultiMonitorWindows[i] && SDL_GetWindowID(m_MultiMonitorWindows[i]) == windowID) {
                 m_ActiveWindow = m_MultiMonitorWindows[i];
                 return m_ActiveWindow;
             }
         }
+        // Event from unknown window (possibly the hidden m_Window) -- use current active
+        return m_ActiveWindow ? m_ActiveWindow : m_Window;
     }
     return m_Window;
 }
