@@ -366,7 +366,15 @@ int Session::drSubmitDecodeUnit(PDECODE_UNIT du)
     // the decoder reinitialization code.
 
     if (SDL_TryLockMutex(s_ActiveSession->m_DecoderLock) == 0) {
-        IVideoDecoder* decoder = s_ActiveSession->m_VideoDecoder;
+        // Route to the correct decoder based on stream index
+        IVideoDecoder* decoder;
+        int streamIdx = du->streamIndex;
+        if (streamIdx > 0 && streamIdx < s_ActiveSession->m_VideoStreams.size()) {
+            decoder = s_ActiveSession->m_VideoStreams[streamIdx].decoder;
+        } else {
+            decoder = s_ActiveSession->m_VideoDecoder;
+        }
+
         if (decoder != nullptr) {
             int ret = decoder->submitDecodeUnit(du);
             SDL_UnlockMutex(s_ActiveSession->m_DecoderLock);
@@ -633,8 +641,14 @@ bool Session::initialize(QQuickWindow* qtWindow)
     }
 
     LiInitializeStreamConfiguration(&m_StreamConfig);
-    m_StreamConfig.width = m_Preferences->width;
-    m_StreamConfig.height = m_Preferences->height;
+
+    // Multi-monitor: set per-monitor resolution (not combined)
+    m_PerMonitorWidth = m_Preferences->width;
+    m_PerMonitorHeight = m_Preferences->height;
+    m_NumVideoStreams = 1;  // Will be updated from preferences when multi-monitor UI is added
+    m_StreamConfig.width = m_PerMonitorWidth;
+    m_StreamConfig.height = m_PerMonitorHeight;
+    m_StreamConfig.numVideoStreams = m_NumVideoStreams;
 
     int x, y, width, height;
     getWindowDimensions(x, y, width, height);

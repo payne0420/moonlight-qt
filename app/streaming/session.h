@@ -253,6 +253,18 @@ private:
     SDL_Window* m_Window;
     IVideoDecoder* m_VideoDecoder;
     SDL_mutex* m_DecoderLock;
+
+    // Multi-stream monitor state
+    int m_NumVideoStreams = 1;
+    int m_PerMonitorWidth = 0;
+    int m_PerMonitorHeight = 0;
+    struct VideoStreamState {
+        IVideoDecoder* decoder = nullptr;
+        SDL_Window* window = nullptr;
+        int streamIndex = 0;
+    };
+    QVector<VideoStreamState> m_VideoStreams;
+    QVector<SDL_Window*> m_MonitorWindows;
     bool m_AudioDisabled;
     bool m_AudioMuted;
     Uint32 m_FullScreenFlag;
