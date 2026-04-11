@@ -79,6 +79,9 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         return;
     }
 
+    // Capture the window ID before batching (used for multi-monitor routing)
+    Uint32 windowID = event->windowID;
+
     // Batch all pending mouse motion events to save CPU time
     Sint32 x = event->x, y = event->y, xrel = event->xrel, yrel = event->yrel;
     SDL_Event nextEvent;
@@ -91,6 +94,7 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
             y = event->y;
             xrel += event->xrel;
             yrel += event->yrel;
+            windowID = event->windowID;
         }
     }
 
@@ -98,8 +102,10 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
     event = nullptr;
 
     if (m_AbsoluteMouseMode) {
+        // Resolve the target window for multi-monitor
+        SDL_Window* targetWindow = m_MultiMonitorEnabled ? getWindowForEvent(windowID) : m_Window;
         int windowWidth, windowHeight;
-        SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
+        SDL_GetWindowSize(targetWindow, &windowWidth, &windowHeight);
 
         SDL_Rect src, dst;
         bool mouseInVideoRegion;
@@ -134,7 +140,15 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
             }
         }
         if (mouseInVideoRegion || m_MouseWasInVideoRegion || m_PendingMouseButtonsAllUpOnVideoRegionLeave) {
-            LiSendMousePositionEvent((short)x, (short)y, dst.w, dst.h);
+            if (m_MultiMonitorEnabled) {
+                // Multi-monitor: offset X by monitor index and send combined reference width
+                int monIdx = getMonitorIndex(targetWindow);
+                short adjX = (short)(x + monIdx * dst.w);
+                short totalRefW = (short)(m_MultiMonitorCount * dst.w);
+                LiSendMousePositionEvent(adjX, (short)y, totalRefW, (short)dst.h);
+            } else {
+                LiSendMousePositionEvent((short)x, (short)y, dst.w, dst.h);
+            }
         }
 
         // Adjust the cursor visibility if applicable
@@ -240,7 +254,8 @@ bool SdlInputHandler::isMouseInVideoRegion(int mouseX, int mouseY, int windowWid
     SDL_Rect src, dst;
 
     if (windowWidth < 0 || windowHeight < 0) {
-        SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
+        SDL_Window* win = m_MultiMonitorEnabled ? getActiveWindow() : m_Window;
+        SDL_GetWindowSize(win, &windowWidth, &windowHeight);
     }
 
     src.x = src.y = 0;

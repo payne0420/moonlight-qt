@@ -170,6 +170,11 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
         return;
     }
 
+    // Track which window has keyboard focus for multi-monitor input routing
+    if (m_MultiMonitorEnabled) {
+        getWindowForEvent(event->windowID);
+    }
+
     // Check for our special key combos
     if ((event->state == SDL_PRESSED) &&
             (event->keysym.mod & KMOD_CTRL) &&
