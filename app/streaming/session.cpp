@@ -650,8 +650,28 @@ bool Session::initialize(QQuickWindow* qtWindow)
         m_MultiMonitorCount = m_Preferences->multiMonitorCount;
         m_PerMonitorWidth = m_Preferences->width;
         m_PerMonitorHeight = m_Preferences->height;
-        m_StreamConfig.width = m_Preferences->width * m_Preferences->multiMonitorCount;
-        m_StreamConfig.height = m_Preferences->height;
+
+        // Hardware encoders (NVENC, AMF, QSV) typically cannot encode frames wider
+        // than 8192 pixels. If the combined multi-monitor resolution exceeds this,
+        // scale down per-monitor dimensions proportionally to fit.
+        const int MAX_ENCODE_WIDTH = 8192;
+        int combinedWidth = m_PerMonitorWidth * m_MultiMonitorCount;
+        if (combinedWidth > MAX_ENCODE_WIDTH) {
+            int cappedPerWidth = (MAX_ENCODE_WIDTH / m_MultiMonitorCount) & ~1;
+            float scale = (float)cappedPerWidth / m_PerMonitorWidth;
+            int cappedPerHeight = (int)(m_PerMonitorHeight * scale) & ~1;
+
+            qWarning() << "Combined resolution" << combinedWidth << "x" << m_PerMonitorHeight
+                       << "exceeds encoder max width" << MAX_ENCODE_WIDTH
+                       << "- scaling per-monitor from" << m_PerMonitorWidth << "x" << m_PerMonitorHeight
+                       << "to" << cappedPerWidth << "x" << cappedPerHeight;
+
+            m_PerMonitorWidth = cappedPerWidth;
+            m_PerMonitorHeight = cappedPerHeight;
+        }
+
+        m_StreamConfig.width = m_PerMonitorWidth * m_MultiMonitorCount;
+        m_StreamConfig.height = m_PerMonitorHeight;
         qInfo() << "Multi-monitor enabled:" << m_MultiMonitorCount << "monitors at"
                 << m_PerMonitorWidth << "x" << m_PerMonitorHeight
                 << "combined:" << m_StreamConfig.width << "x" << m_StreamConfig.height;
