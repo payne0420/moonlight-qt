@@ -656,7 +656,7 @@ bool Session::initialize(QQuickWindow* qtWindow)
     }
     m_StreamConfig.width = m_PerMonitorWidth;
     m_StreamConfig.height = m_PerMonitorHeight;
-    m_StreamConfig.numVideoStreams = m_NumVideoStreams;
+    m_StreamConfig.multiStreamCount = m_NumVideoStreams;
 
     int x, y, width, height;
     getWindowDimensions(x, y, width, height);

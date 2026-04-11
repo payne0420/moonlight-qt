@@ -813,6 +813,55 @@ Flickable {
                 }
 
                 CheckBox {
+                    id: multiMonitorCheck
+                    width: parent.width
+                    hoverEnabled: true
+                    text: qsTr("Multi-monitor streaming")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.multiMonitorEnabled
+                    onCheckedChanged: {
+                        StreamingPreferences.multiMonitorEnabled = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Stream to multiple monitors simultaneously. Each monitor gets its own independent video stream from the host.")
+                }
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Number of monitors")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                    visible: multiMonitorCheck.checked
+                }
+
+                AutoResizingComboBox {
+                    id: multiMonitorCountComboBox
+                    visible: multiMonitorCheck.checked
+                    textRole: "text"
+                    Component.onCompleted: {
+                        var saved_count = StreamingPreferences.multiMonitorCount
+                        for (var i = 0; i < multiMonitorCountModel.count; i++) {
+                            if (multiMonitorCountModel.get(i).val === saved_count) {
+                                currentIndex = i
+                                break
+                            }
+                        }
+                    }
+                    model: ListModel {
+                        id: multiMonitorCountModel
+                        ListElement { text: "2"; val: 2 }
+                        ListElement { text: "3"; val: 3 }
+                        ListElement { text: "4"; val: 4 }
+                    }
+                    onActivated: {
+                        StreamingPreferences.multiMonitorCount = model.get(currentIndex).val
+                    }
+                }
+
+                CheckBox {
                     id: vsyncCheck
                     width: parent.width
                     hoverEnabled: true

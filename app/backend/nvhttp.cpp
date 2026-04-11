@@ -223,8 +223,8 @@ NvHTTP::startApp(QString verb,
                                    "&remoteControllersBitmap="+QString::number(gamepadMask)+
                                    "&gcmap="+QString::number(gamepadMask)+
                                    "&gcpersist="+QString::number(persistGameControllersOnDisconnect ? 1 : 0)+
-                                   (streamConfig->numVideoStreams > 1
-                                       ? "&numVideoStreams="+QString::number(streamConfig->numVideoStreams)
+                                   (streamConfig->multiStreamCount > 1
+                                       ? "&numVideoStreams="+QString::number(streamConfig->multiStreamCount)
                                        : "")+
                                    LiGetLaunchUrlQueryParameters(),
                                    LAUNCH_TIMEOUT_MS);
