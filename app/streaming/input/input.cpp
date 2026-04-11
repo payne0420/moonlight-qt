@@ -251,6 +251,51 @@ void SdlInputHandler::setWindow(SDL_Window *window)
     m_Window = window;
 }
 
+void SdlInputHandler::setMultiMonitor(bool enabled, int count, int perMonitorWidth, int perMonitorHeight,
+                                       const QVector<SDL_Window*>& windows)
+{
+    m_MultiMonitorEnabled = enabled;
+    m_MultiMonitorCount = count;
+    m_PerMonitorWidth = perMonitorWidth;
+    m_PerMonitorHeight = perMonitorHeight;
+    m_MultiMonitorWindows = windows;
+    m_ActiveWindow = windows.isEmpty() ? m_Window : windows[0];
+}
+
+SDL_Window* SdlInputHandler::getActiveWindow()
+{
+    if (m_MultiMonitorEnabled && m_ActiveWindow != nullptr) {
+        return m_ActiveWindow;
+    }
+    return m_Window;
+}
+
+SDL_Window* SdlInputHandler::getWindowForEvent(Uint32 windowID)
+{
+    if (m_MultiMonitorEnabled) {
+        for (int i = 0; i < m_MultiMonitorWindows.size(); i++) {
+            if (m_MultiMonitorWindows[i] && SDL_GetWindowID(m_MultiMonitorWindows[i]) == windowID) {
+                m_ActiveWindow = m_MultiMonitorWindows[i];
+                return m_ActiveWindow;
+            }
+        }
+        return m_ActiveWindow ? m_ActiveWindow : m_Window;
+    }
+    return m_Window;
+}
+
+int SdlInputHandler::getMonitorIndex(SDL_Window* window)
+{
+    if (m_MultiMonitorEnabled) {
+        for (int i = 0; i < m_MultiMonitorWindows.size(); i++) {
+            if (m_MultiMonitorWindows[i] == window) {
+                return i;
+            }
+        }
+    }
+    return 0;
+}
+
 void SdlInputHandler::raiseAllKeys()
 {
     if (m_KeysDown.isEmpty()) {

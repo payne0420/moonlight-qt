@@ -145,6 +145,8 @@ public:
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
+    Q_PROPERTY(bool multiMonitorEnabled MEMBER multiMonitorEnabled NOTIFY multiMonitorChanged)
+    Q_PROPERTY(int multiMonitorCount MEMBER multiMonitorCount NOTIFY multiMonitorChanged)
 
     Q_INVOKABLE bool retranslate();
 
@@ -187,6 +189,8 @@ public:
     UIDisplayMode uiDisplayMode;
     Language language;
     CaptureSysKeysMode captureSysKeysMode;
+    bool multiMonitorEnabled;
+    int multiMonitorCount;
 
 signals:
     void displayModeChanged();
@@ -224,6 +228,7 @@ signals:
     void captureSysKeysModeChanged();
     void keepAwakeChanged();
     void languageChanged();
+    void multiMonitorChanged();
 
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);

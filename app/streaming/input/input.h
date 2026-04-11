@@ -90,6 +90,9 @@ public:
 
     void setWindow(SDL_Window* window);
 
+    void setMultiMonitor(bool enabled, int count, int perMonitorWidth, int perMonitorHeight,
+                         const QVector<SDL_Window*>& windows);
+
     void handleKeyEvent(SDL_KeyboardEvent* event);
 
     void handleMouseButtonEvent(SDL_MouseButtonEvent* event);
@@ -202,7 +205,12 @@ private:
     static
     Uint32 dragTimerCallback(Uint32 interval, void* param);
 
+    SDL_Window* getActiveWindow();
+    SDL_Window* getWindowForEvent(Uint32 windowID);
+    int getMonitorIndex(SDL_Window* window);
+
     SDL_Window* m_Window;
+    SDL_Window* m_ActiveWindow = nullptr;
     bool m_MultiController;
     bool m_GamepadMouse;
     bool m_SwapMouseButtons;
@@ -239,6 +247,13 @@ private:
     bool m_AbsoluteMouseMode;
     bool m_AbsoluteTouchMode;
     bool m_DisabledTouchFeedback;
+
+    // Multi-monitor support
+    bool m_MultiMonitorEnabled = false;
+    int m_MultiMonitorCount = 1;
+    int m_PerMonitorWidth = 0;
+    int m_PerMonitorHeight = 0;
+    QVector<SDL_Window*> m_MultiMonitorWindows;
 
     SDL_TouchFingerEvent m_TouchDownEvent[MAX_FINGERS];
     SDL_TimerID m_LeftButtonReleaseTimer;

@@ -642,10 +642,16 @@ bool Session::initialize(QQuickWindow* qtWindow)
 
     LiInitializeStreamConfiguration(&m_StreamConfig);
 
-    // Multi-monitor: set per-monitor resolution (not combined)
+    // Multi-monitor: set per-monitor resolution (each stream at full resolution)
     m_PerMonitorWidth = m_Preferences->width;
     m_PerMonitorHeight = m_Preferences->height;
-    m_NumVideoStreams = 1;  // Will be updated from preferences when multi-monitor UI is added
+    if (m_Preferences->multiMonitorEnabled && m_Preferences->multiMonitorCount > 1) {
+        m_NumVideoStreams = m_Preferences->multiMonitorCount;
+        qInfo() << "Multi-monitor enabled:" << m_NumVideoStreams << "streams at"
+                << m_PerMonitorWidth << "x" << m_PerMonitorHeight << "each";
+    } else {
+        m_NumVideoStreams = 1;
+    }
     m_StreamConfig.width = m_PerMonitorWidth;
     m_StreamConfig.height = m_PerMonitorHeight;
     m_StreamConfig.numVideoStreams = m_NumVideoStreams;
