@@ -1526,6 +1526,9 @@ void Session::toggleFullscreen()
 
     // Actually enter/leave fullscreen
     SDL_SetWindowFullscreen(m_Window, fullScreen ? m_FullScreenFlag : 0);
+    for (auto* mmWin : m_MonitorWindows) {
+        if (mmWin) SDL_SetWindowFullscreen(mmWin, fullScreen ? m_FullScreenFlag : 0);
+    }
 
 #ifdef Q_OS_DARWIN
     // SDL on macOS has a bug that causes the window size to be reset to crazy
@@ -1975,6 +1978,9 @@ void Session::exec()
     // Enter full screen if requested
     if (m_IsFullScreen) {
         SDL_SetWindowFullscreen(m_Window, m_FullScreenFlag);
+        for (auto* mmWin : m_MonitorWindows) {
+            if (mmWin) SDL_SetWindowFullscreen(mmWin, m_FullScreenFlag);
+        }
     }
 
     bool needsFirstEnterCapture = false;
@@ -2114,11 +2120,29 @@ void Session::exec()
             // Early handling of some events
             switch (event.window.event) {
             case SDL_WINDOWEVENT_FOCUS_LOST:
-                if (m_Preferences->muteOnFocusLoss) {
-                    m_AudioMuted = true;
+            {
+                // In multi-monitor mode, don't treat focus switches between our own
+                // windows as a true focus loss. SDL updates internal focus state before
+                // queueing FOCUS_LOST, so SDL_GetKeyboardFocus() already returns the
+                // new target window at processing time.
+                bool isInternalSwitch = false;
+                if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
+                    SDL_Window* focused = SDL_GetKeyboardFocus();
+                    for (auto* mmWin : m_MonitorWindows) {
+                        if (mmWin == focused) {
+                            isInternalSwitch = true;
+                            break;
+                        }
+                    }
                 }
-                m_InputHandler->notifyFocusLost();
+                if (!isInternalSwitch) {
+                    if (m_Preferences->muteOnFocusLoss) {
+                        m_AudioMuted = true;
+                    }
+                    m_InputHandler->notifyFocusLost();
+                }
                 break;
+            }
             case SDL_WINDOWEVENT_FOCUS_GAINED:
                 if (m_Preferences->muteOnFocusLoss) {
                     m_AudioMuted = false;

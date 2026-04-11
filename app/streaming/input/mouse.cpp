@@ -12,7 +12,13 @@ void SdlInputHandler::handleMouseButtonEvent(SDL_MouseButtonEvent* event)
         // Ignore synthetic mouse events
         return;
     }
-    else if (!isCaptureActive()) {
+
+    // Resolve source window so isMouseInVideoRegion() uses correct dimensions
+    if (m_MultiMonitorEnabled) {
+        getWindowForEvent(event->windowID);
+    }
+
+    if (!isCaptureActive()) {
         if (event->button == SDL_BUTTON_LEFT && event->state == SDL_RELEASED &&
                 isMouseInVideoRegion(event->x, event->y)) {
             // Capture the mouse again if clicked when unbound.
