@@ -259,7 +259,9 @@ void SdlInputHandler::setMultiMonitor(bool enabled, int count, int perMonitorWid
     m_PerMonitorWidth = perMonitorWidth;
     m_PerMonitorHeight = perMonitorHeight;
     m_MultiMonitorWindows = windows;
-    m_ActiveWindow = windows.isEmpty() ? nullptr : windows[0];
+    // Default active window is the primary (m_Window), not the first extra window.
+    // getWindowForEvent() will switch m_ActiveWindow when events arrive from other windows.
+    m_ActiveWindow = m_Window;
 }
 
 SDL_Window* SdlInputHandler::getActiveWindow()
@@ -273,6 +275,12 @@ SDL_Window* SdlInputHandler::getActiveWindow()
 SDL_Window* SdlInputHandler::getWindowForEvent(Uint32 windowID)
 {
     if (m_MultiMonitorEnabled) {
+        // Check if the event is from the primary window
+        if (m_Window && SDL_GetWindowID(m_Window) == windowID) {
+            m_ActiveWindow = m_Window;
+            return m_Window;
+        }
+        // Check extra monitor windows
         for (int i = 0; i < m_MultiMonitorWindows.size(); i++) {
             if (m_MultiMonitorWindows[i] && SDL_GetWindowID(m_MultiMonitorWindows[i]) == windowID) {
                 m_ActiveWindow = m_MultiMonitorWindows[i];
