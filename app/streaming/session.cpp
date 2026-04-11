@@ -1286,6 +1286,9 @@ private:
         // try to interact with APIs that can only be called between
         // LiStartConnection() and LiStopConnection().
         SDL_assert(m_Session->m_VideoDecoder == nullptr);
+        for (const auto &vs : m_Session->m_VideoStreams) {
+            SDL_assert(vs.decoder == nullptr);
+        }
 
         // Finish cleanup of the connection state
         LiStopConnection();
@@ -1517,6 +1520,10 @@ void Session::toggleFullscreen()
     SDL_LockMutex(m_DecoderLock);
     delete m_VideoDecoder;
     m_VideoDecoder = nullptr;
+    for (auto &vs : m_VideoStreams) {
+        delete vs.decoder;
+        vs.decoder = nullptr;
+    }
     SDL_UnlockMutex(m_DecoderLock);
 #endif
 
@@ -1926,6 +1933,14 @@ void Session::exec()
 
         qInfo() << "Multi-monitor:" << m_MonitorWindows.size()
                 << "windows for" << m_NumVideoStreams << "streams";
+
+        // Pre-populate m_VideoStreams so the frame routing logic has slots ready.
+        // Decoders will be created after the primary decoder is initialized.
+        m_VideoStreams.resize(m_NumVideoStreams);
+        for (int i = 1; i < m_NumVideoStreams && i < m_MonitorWindows.size(); i++) {
+            m_VideoStreams[i].window = m_MonitorWindows[i];
+            m_VideoStreams[i].streamIndex = i;
+        }
     }
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
@@ -2227,8 +2242,12 @@ void Session::exec()
 
             SDL_LockMutex(m_DecoderLock);
 
-            // Destroy the old decoder
+            // Destroy the old decoder (and secondary decoders)
             delete m_VideoDecoder;
+            for (auto &vs : m_VideoStreams) {
+                delete vs.decoder;
+                vs.decoder = nullptr;
+            }
 
             // Insert a barrier to discard any additional window events
             // that could cause the renderer to be and recreated again.
@@ -2286,8 +2305,46 @@ void Session::exec()
                 }
             }
 
+            // Create decoders for secondary multi-monitor streams
+            if (m_NumVideoStreams > 1) {
+                for (int i = 1; i < m_VideoStreams.size(); i++) {
+                    if (m_VideoStreams[i].window && !m_VideoStreams[i].decoder) {
+                        int secDisplayHz = StreamUtils::getDisplayRefreshRate(m_VideoStreams[i].window);
+                        bool secEnableVsync = m_Preferences->enableVsync;
+                        if (secDisplayHz + 5 < m_StreamConfig.fps) {
+                            secEnableVsync = false;
+                        }
+                        IVideoDecoder* secDecoder = nullptr;
+                        if (chooseDecoder(m_Preferences->videoDecoderSelection,
+                                          m_VideoStreams[i].window,
+                                          m_ActiveVideoFormat,
+                                          m_ActiveVideoWidth,
+                                          m_ActiveVideoHeight,
+                                          m_ActiveVideoFrameRate,
+                                          secEnableVsync,
+                                          secEnableVsync && m_Preferences->framePacing,
+                                          false,
+                                          secDecoder)) {
+                            m_VideoStreams[i].decoder = secDecoder;
+                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                        "Created decoder for secondary stream %d", i);
+                        } else {
+                            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                         "Failed to create decoder for secondary stream %d", i);
+                        }
+                    }
+                }
+            }
+
             // Request an IDR frame to complete the reset
             LiRequestIdrFrame();
+
+            // Request IDR frames for secondary streams
+            for (int i = 1; i < m_VideoStreams.size(); i++) {
+                if (m_VideoStreams[i].decoder) {
+                    LiRequestIdrFrameForStream((uint8_t)i);
+                }
+            }
 
             // Set HDR mode. We may miss the callback if we're in the middle
             // of recreating our decoder at the time the HDR transition happens.
@@ -2389,6 +2446,10 @@ DispatchDeferredCleanup:
     SDL_LockMutex(m_DecoderLock);
     delete m_VideoDecoder;
     m_VideoDecoder = nullptr;
+    for (auto &vs : m_VideoStreams) {
+        delete vs.decoder;
+        vs.decoder = nullptr;
+    }
     SDL_UnlockMutex(m_DecoderLock);
 
     // Propagate state changes from the SDL window back to the Qt window
