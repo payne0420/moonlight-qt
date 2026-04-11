@@ -102,21 +102,19 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
 
         // Multi-monitor: determine which window the cursor is in and apply X offset.
-        // m_MultiMonitorWindows contains only the EXTRA windows (monitors 1, 2, ...).
-        // The primary window (m_Window) is monitor 0 with offset 0.
+        // m_MultiMonitorWindows contains ALL visible windows (monitors 0, 1, 2, ...).
         int multiMonitorXOffset = 0;
         if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
             int gx, gy;
             SDL_GetGlobalMouseState(&gx, &gy);
 
-            // Check extra monitor windows (index i in list = monitor i+1)
             for (int i = 0; i < m_MultiMonitorWindows.size(); i++) {
                 if (m_MultiMonitorWindows[i]) {
                     int wx, wy, ww, wh;
                     SDL_GetWindowPosition(m_MultiMonitorWindows[i], &wx, &wy);
                     SDL_GetWindowSize(m_MultiMonitorWindows[i], &ww, &wh);
                     if (gx >= wx && gx < wx + ww && gy >= wy && gy < wy + wh) {
-                        multiMonitorXOffset = (i + 1) * m_PerMonitorWidth;
+                        multiMonitorXOffset = i * m_PerMonitorWidth;
                         windowWidth = ww;
                         windowHeight = wh;
                         break;

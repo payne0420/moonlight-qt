@@ -43,6 +43,14 @@ public:
 
     void renderOnMainThread();
 
+    // Called after each frame is rendered by the primary renderer, before deferred free.
+    // The frame is still valid during this callback.
+    typedef void (*PostRenderCallback)(AVFrame* frame, void* context);
+    void setPostRenderCallback(PostRenderCallback cb, void* context) {
+        m_PostRenderCallback = cb;
+        m_PostRenderContext = context;
+    }
+
 private:
     static int vsyncThread(void* context);
 
@@ -74,5 +82,7 @@ private:
     int m_MaxVideoFps;
     int m_DisplayFps;
     PVIDEO_STATS m_VideoStats;
+    PostRenderCallback m_PostRenderCallback = nullptr;
+    void* m_PostRenderContext = nullptr;
     int m_RendererAttributes;
 };

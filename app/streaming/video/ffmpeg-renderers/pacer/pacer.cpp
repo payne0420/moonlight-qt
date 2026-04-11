@@ -337,6 +337,12 @@ void Pacer::renderFrame(AVFrame* frame)
 
     // Render it
     m_VsyncRenderer->renderFrame(frame);
+
+    // Notify post-render callback (e.g. multi-monitor extra windows)
+    if (m_PostRenderCallback) {
+        m_PostRenderCallback(frame, m_PostRenderContext);
+    }
+
     uint64_t afterRender = LiGetMicroseconds();
 
     m_VideoStats->totalRenderTimeUs += (afterRender - beforeRender);

@@ -1883,33 +1883,35 @@ void Session::exec()
         }
     }
 
-    // Multi-monitor: create a fullscreen window on each target display.
-    // The server sends a combined-resolution stream (e.g. 5760x1080 for 3x1920x1080).
-    // Each window shows its horizontal slice of the combined frame.
+    // Multi-monitor: create a window on each target display (including display 0).
+    // The primary renderer's window (m_Window) is hidden; all visible output goes
+    // through decoder-managed SDL renderers so the approach works regardless of
+    // which hardware renderer is used (SdlRenderer, VTMetal, etc.).
     if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
         int numDisplays = SDL_GetNumVideoDisplays();
 
-        for (int i = 1; i < m_MultiMonitorCount && i < numDisplays; i++) {
-            std::string extraWindowName = windowName + " (" + std::to_string(i + 1) + ")";
+        // Create windows for ALL monitors (0 through N-1)
+        for (int i = 0; i < m_MultiMonitorCount && i < numDisplays; i++) {
+            std::string mmWindowName = windowName + " (" + std::to_string(i + 1) + ")";
             int dx = SDL_WINDOWPOS_CENTERED_DISPLAY(i);
             int dy = SDL_WINDOWPOS_CENTERED_DISPLAY(i);
 
-            SDL_Window* extraWin = SDL_CreateWindow(
-                extraWindowName.c_str(),
+            SDL_Window* mmWin = SDL_CreateWindow(
+                mmWindowName.c_str(),
                 dx, dy,
                 m_PerMonitorWidth, m_PerMonitorHeight,
                 defaultWindowFlags | StreamUtils::getPlatformWindowFlags());
 
-            if (!extraWin) {
-                extraWin = SDL_CreateWindow(
-                    extraWindowName.c_str(),
+            if (!mmWin) {
+                mmWin = SDL_CreateWindow(
+                    mmWindowName.c_str(),
                     dx, dy,
                     m_PerMonitorWidth, m_PerMonitorHeight,
                     defaultWindowFlags);
             }
 
-            if (extraWin) {
-                m_MonitorWindows.append(extraWin);
+            if (mmWin) {
+                m_MonitorWindows.append(mmWin);
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                             "Created multi-monitor window %d on display %d", i + 1, i);
             } else {
@@ -1918,7 +1920,10 @@ void Session::exec()
             }
         }
 
-        qInfo() << "Multi-monitor: created" << (1 + m_MonitorWindows.size())
+        // Hide the primary renderer's window — all visible output is via m_MonitorWindows
+        SDL_HideWindow(m_Window);
+
+        qInfo() << "Multi-monitor:" << m_MonitorWindows.size()
                 << "windows for" << m_MultiMonitorCount << "monitors";
     }
 
@@ -2295,6 +2300,13 @@ void Session::exec()
                 }
             }
 
+            // Set up multi-monitor rendering on the newly created decoder
+            if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1 && !m_MonitorWindows.isEmpty()) {
+                m_VideoDecoder->setMultiMonitorWindows(m_MonitorWindows,
+                                                        m_PerMonitorWidth,
+                                                        m_PerMonitorHeight);
+            }
+
             // Request an IDR frame to complete the reset
             LiRequestIdrFrame();
 
@@ -2425,7 +2437,7 @@ DispatchDeferredCleanup:
 #endif
     }
 
-    // Destroy multi-monitor extra windows (renderers/textures are owned by SdlRenderer)
+    // Destroy multi-monitor windows (renderers/textures are cleaned up by the decoder)
     for (int i = 0; i < m_MonitorWindows.size(); i++) {
         if (m_MonitorWindows[i]) {
             SDL_DestroyWindow(m_MonitorWindows[i]);

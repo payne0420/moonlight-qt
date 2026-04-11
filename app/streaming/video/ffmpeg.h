@@ -135,6 +135,19 @@ private:
     SDL_Thread* m_DecoderThread;
     SDL_atomic_t m_DecoderThreadShouldQuit;
 
+    // Multi-monitor extra window rendering (owned by decoder, renderer-agnostic)
+    struct ExtraMonitorState {
+        SDL_Window* window = nullptr;
+        SDL_Renderer* renderer = nullptr;
+        SDL_Texture* texture = nullptr;
+    };
+    QVector<ExtraMonitorState> m_ExtraMonitors;
+    int m_PerMonitorWidth = 0;
+    int m_PerMonitorHeight = 0;
+    int m_MonitorCount = 1;
+    void renderExtraMonitors(AVFrame* frame);
+    void cleanupExtraMonitors();
+
     // Data buffers in the queued DU are not valid
     QQueue<DECODE_UNIT> m_FrameInfoQueue;
 
