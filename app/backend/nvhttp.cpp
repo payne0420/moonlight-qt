@@ -209,7 +209,8 @@ NvHTTP::startApp(QString verb,
     if (multiMonitor && monitorCount > 1) {
         multiMonitorParams = "&multiMonitor="+QString::number(monitorCount)+
                              "&perMonitorWidth="+QString::number(perMonitorWidth)+
-                             "&perMonitorHeight="+QString::number(perMonitorHeight);
+                             "&perMonitorHeight="+QString::number(perMonitorHeight)+
+                             "&numVideoStreams="+QString::number(monitorCount);
     }
 
     QString response =

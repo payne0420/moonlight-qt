@@ -252,6 +252,15 @@ private:
     int m_PerMonitorHeight = 0;
     QVector<SDL_Window*> m_MonitorWindows;
     QVector<SDL_Renderer*> m_MonitorRenderers;
+
+    // Multi-stream: per-stream decoder state for region-based streaming
+    struct VideoStreamState {
+        IVideoDecoder* decoder = nullptr;
+        SDL_Window* window = nullptr;
+        int streamIndex = 0;
+    };
+    QVector<VideoStreamState> m_VideoStreams;
+
     SupportedVideoFormatList m_SupportedVideoFormats; // Sorted in order of descending priority
     STREAM_CONFIGURATION m_StreamConfig;
     DECODER_RENDERER_CALLBACKS m_VideoCallbacks;

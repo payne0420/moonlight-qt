@@ -376,7 +376,15 @@ int Session::drSubmitDecodeUnit(PDECODE_UNIT du)
     // the decoder reinitialization code.
 
     if (SDL_TryLockMutex(s_ActiveSession->m_DecoderLock) == 0) {
-        IVideoDecoder* decoder = s_ActiveSession->m_VideoDecoder;
+        // Route to the correct decoder based on stream index
+        IVideoDecoder* decoder;
+        int streamIdx = du->streamIndex;
+        if (streamIdx > 0 && streamIdx < s_ActiveSession->m_VideoStreams.size()) {
+            decoder = s_ActiveSession->m_VideoStreams[streamIdx].decoder;
+        } else {
+            decoder = s_ActiveSession->m_VideoDecoder;
+        }
+
         if (decoder != nullptr) {
             int ret = decoder->submitDecodeUnit(du);
             SDL_UnlockMutex(s_ActiveSession->m_DecoderLock);
@@ -670,11 +678,13 @@ bool Session::initialize(QQuickWindow* qtWindow)
             m_PerMonitorHeight = cappedPerHeight;
         }
 
-        m_StreamConfig.width = m_PerMonitorWidth * m_MultiMonitorCount;
+        // Each stream carries per-monitor resolution, not the combined width.
+        // The server captures the combined desktop and crops regions per stream.
+        m_StreamConfig.width = m_PerMonitorWidth;
         m_StreamConfig.height = m_PerMonitorHeight;
-        qInfo() << "Multi-monitor enabled:" << m_MultiMonitorCount << "monitors at"
-                << m_PerMonitorWidth << "x" << m_PerMonitorHeight
-                << "combined:" << m_StreamConfig.width << "x" << m_StreamConfig.height;
+        m_StreamConfig.multiStreamCount = m_MultiMonitorCount;
+        qInfo() << "Multi-monitor enabled:" << m_MultiMonitorCount << "streams at"
+                << m_PerMonitorWidth << "x" << m_PerMonitorHeight << "each";
     } else {
         m_MultiMonitorEnabled = false;
         m_MultiMonitorCount = 1;
@@ -1543,6 +1553,10 @@ void Session::toggleFullscreen()
     SDL_LockMutex(m_DecoderLock);
     delete m_VideoDecoder;
     m_VideoDecoder = nullptr;
+    for (auto &vs : m_VideoStreams) {
+        delete vs.decoder;
+        vs.decoder = nullptr;
+    }
     SDL_UnlockMutex(m_DecoderLock);
 #endif
 
@@ -1976,6 +1990,14 @@ void Session::exec()
 
         qInfo() << "Multi-monitor:" << m_MonitorWindows.size()
                 << "windows for" << m_MultiMonitorCount << "monitors";
+
+        // Pre-populate m_VideoStreams so the frame routing logic has slots ready.
+        // Decoders will be created after the primary decoder is initialized.
+        m_VideoStreams.resize(m_MultiMonitorCount);
+        for (int i = 0; i < m_MultiMonitorCount && i < m_MonitorWindows.size(); i++) {
+            m_VideoStreams[i].window = m_MonitorWindows[i];
+            m_VideoStreams[i].streamIndex = i;
+        }
     }
 
     m_InputHandler->setWindow(m_Window);
@@ -2313,8 +2335,12 @@ void Session::exec()
 
             SDL_LockMutex(m_DecoderLock);
 
-            // Destroy the old decoder
+            // Destroy the old decoder (and secondary decoders)
             delete m_VideoDecoder;
+            for (auto &vs : m_VideoStreams) {
+                delete vs.decoder;
+                vs.decoder = nullptr;
+            }
 
             // Insert a barrier to discard any additional window events
             // that could cause the renderer to be and recreated again.
@@ -2379,8 +2405,46 @@ void Session::exec()
                                                         m_PerMonitorHeight);
             }
 
+            // Create decoders for secondary multi-monitor streams
+            if (m_MultiMonitorCount > 1 && !m_VideoStreams.isEmpty()) {
+                for (int i = 1; i < m_VideoStreams.size(); i++) {
+                    if (m_VideoStreams[i].window && !m_VideoStreams[i].decoder) {
+                        int secDisplayHz = StreamUtils::getDisplayRefreshRate(m_VideoStreams[i].window);
+                        bool secEnableVsync = m_Preferences->enableVsync;
+                        if (secDisplayHz + 5 < m_StreamConfig.fps) {
+                            secEnableVsync = false;
+                        }
+                        IVideoDecoder* secDecoder = nullptr;
+                        if (chooseDecoder(m_Preferences->videoDecoderSelection,
+                                          m_VideoStreams[i].window,
+                                          m_ActiveVideoFormat,
+                                          m_ActiveVideoWidth,
+                                          m_ActiveVideoHeight,
+                                          m_ActiveVideoFrameRate,
+                                          secEnableVsync,
+                                          secEnableVsync && m_Preferences->framePacing,
+                                          false,
+                                          secDecoder)) {
+                            m_VideoStreams[i].decoder = secDecoder;
+                            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                                        "Created decoder for secondary stream %d", i);
+                        } else {
+                            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                         "Failed to create decoder for secondary stream %d", i);
+                        }
+                    }
+                }
+            }
+
             // Request an IDR frame to complete the reset
             LiRequestIdrFrame();
+
+            // Request IDR frames for secondary streams
+            for (int i = 1; i < m_VideoStreams.size(); i++) {
+                if (m_VideoStreams[i].decoder) {
+                    LiRequestIdrFrameForStream((uint8_t)i);
+                }
+            }
 
             // Set HDR mode. We may miss the callback if we're in the middle
             // of recreating our decoder at the time the HDR transition happens.
@@ -2482,6 +2546,10 @@ DispatchDeferredCleanup:
     SDL_LockMutex(m_DecoderLock);
     delete m_VideoDecoder;
     m_VideoDecoder = nullptr;
+    for (auto &vs : m_VideoStreams) {
+        delete vs.decoder;
+        vs.decoder = nullptr;
+    }
     SDL_UnlockMutex(m_DecoderLock);
 
     // Propagate state changes from the SDL window back to the Qt window
