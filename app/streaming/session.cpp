@@ -295,9 +295,14 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
     params.enableFramePacing = enableFramePacing;
     params.testOnly = testOnly;
     params.vds = vds;
-    params.extraMonitorWindows = m_MonitorWindows;
-    params.perMonitorWidth = m_PerMonitorWidth;
-    params.perMonitorHeight = m_PerMonitorHeight;
+    if (s_ActiveSession) {
+        params.extraMonitorWindows = s_ActiveSession->m_MonitorWindows;
+        params.perMonitorWidth = s_ActiveSession->m_PerMonitorWidth;
+        params.perMonitorHeight = s_ActiveSession->m_PerMonitorHeight;
+    } else {
+        params.perMonitorWidth = 0;
+        params.perMonitorHeight = 0;
+    }
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "V-sync %s",
