@@ -259,6 +259,40 @@ void SdlInputHandler::setMultiMonitor(bool enabled, int count, int perMonitorWid
     m_PerMonitorWidth = perMonitorWidth;
     m_PerMonitorHeight = perMonitorHeight;
     m_MultiMonitorWindows = windows;
+    m_ActiveWindow = windows.isEmpty() ? nullptr : windows[0];
+}
+
+SDL_Window* SdlInputHandler::getActiveWindow()
+{
+    if (m_MultiMonitorEnabled && m_ActiveWindow != nullptr) {
+        return m_ActiveWindow;
+    }
+    return m_Window;
+}
+
+SDL_Window* SdlInputHandler::getWindowForEvent(Uint32 windowID)
+{
+    if (m_MultiMonitorEnabled) {
+        for (int i = 0; i < m_MultiMonitorWindows.size(); i++) {
+            if (m_MultiMonitorWindows[i] && SDL_GetWindowID(m_MultiMonitorWindows[i]) == windowID) {
+                m_ActiveWindow = m_MultiMonitorWindows[i];
+                return m_ActiveWindow;
+            }
+        }
+    }
+    return m_Window;
+}
+
+int SdlInputHandler::getMonitorIndex(SDL_Window* window)
+{
+    if (m_MultiMonitorEnabled) {
+        for (int i = 0; i < m_MultiMonitorWindows.size(); i++) {
+            if (m_MultiMonitorWindows[i] == window) {
+                return i;
+            }
+        }
+    }
+    return 0;
 }
 
 void SdlInputHandler::raiseAllKeys()
@@ -304,7 +338,7 @@ void SdlInputHandler::notifyFocusLost()
     // This lets user to interact with our window's title bar and with the buttons in it.
     // Doing this while the window is full-screen breaks the transition out of FS
     // (desktop and exclusive), so we must check for that before releasing mouse capture.
-    if (!(SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN) && !m_AbsoluteMouseMode) {
+    if (!(SDL_GetWindowFlags(getActiveWindow()) & SDL_WINDOW_FULLSCREEN) && !m_AbsoluteMouseMode) {
         setCaptureActive(false);
     }
 
@@ -334,7 +368,7 @@ void SdlInputHandler::updateKeyboardGrabState()
     }
 
     bool shouldGrab = isCaptureActive();
-    Uint32 windowFlags = SDL_GetWindowFlags(m_Window);
+    Uint32 windowFlags = SDL_GetWindowFlags(getActiveWindow());
     if (m_CaptureSystemKeysMode == StreamingPreferences::CSK_FULLSCREEN &&
             !(windowFlags & SDL_WINDOW_FULLSCREEN)) {
         // Ungrab if it's fullscreen only and we left fullscreen
@@ -345,9 +379,13 @@ void SdlInputHandler::updateKeyboardGrabState()
     SDL_SetHint(SDL_HINT_WINDOWS_NO_CLOSE_ON_ALT_F4, shouldGrab ? "1" : "0");
 
 #if SDL_VERSION_ATLEAST(2, 0, 15)
-    // On SDL 2.0.15+, we can get keyboard-only grab on Win32, X11, and Wayland.
-    // SDL 2.0.18 adds keyboard grab on macOS (if built with non-AppStore APIs).
-    SDL_SetWindowKeyboardGrab(m_Window, shouldGrab ? SDL_TRUE : SDL_FALSE);
+    if (m_MultiMonitorEnabled) {
+        for (auto* win : m_MultiMonitorWindows) {
+            if (win) SDL_SetWindowKeyboardGrab(win, shouldGrab ? SDL_TRUE : SDL_FALSE);
+        }
+    } else {
+        SDL_SetWindowKeyboardGrab(m_Window, shouldGrab ? SDL_TRUE : SDL_FALSE);
+    }
 #endif
 }
 
@@ -357,11 +395,11 @@ bool SdlInputHandler::isSystemKeyCaptureActive()
         return false;
     }
 
-    if (m_Window == nullptr) {
+    if (getActiveWindow() == nullptr) {
         return false;
     }
 
-    Uint32 windowFlags = SDL_GetWindowFlags(m_Window);
+    Uint32 windowFlags = SDL_GetWindowFlags(getActiveWindow());
     if (!(windowFlags & SDL_WINDOW_INPUT_FOCUS)
 #if SDL_VERSION_ATLEAST(2, 0, 15)
             || !(windowFlags & SDL_WINDOW_KEYBOARD_GRABBED)
@@ -401,7 +439,7 @@ void SdlInputHandler::setCaptureActive(bool active)
             SDL_GetGlobalMouseState(&mouseX, &mouseY);
 
             // Convert global mouse state to window-relative
-            SDL_GetWindowPosition(m_Window, &windowX, &windowY);
+            SDL_GetWindowPosition(getActiveWindow(), &windowX, &windowY);
             mouseX -= windowX;
             mouseY -= windowY;
 
@@ -410,7 +448,7 @@ void SdlInputHandler::setCaptureActive(bool active)
                 SDL_MouseMotionEvent motionEvent = {};
                 motionEvent.type = SDL_MOUSEMOTION;
                 motionEvent.timestamp = SDL_GetTicks();
-                motionEvent.windowID = SDL_GetWindowID(m_Window);
+                motionEvent.windowID = SDL_GetWindowID(getActiveWindow());
                 motionEvent.x = mouseX;
                 motionEvent.y = mouseY;
                 handleMouseMotionEvent(&motionEvent);

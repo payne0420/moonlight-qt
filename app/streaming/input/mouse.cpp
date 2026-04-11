@@ -79,56 +79,54 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         return;
     }
 
-    // Batch all pending mouse motion events to save CPU time
+    // Capture the source window from the event before batching
+    Uint32 sourceWindowID = event->windowID;
+
+    // Batch all pending mouse motion events from the same window
     Sint32 x = event->x, y = event->y, xrel = event->xrel, yrel = event->yrel;
     SDL_Event nextEvent;
     while (SDL_PeepEvents(&nextEvent, 1, SDL_GETEVENT, SDL_MOUSEMOTION, SDL_MOUSEMOTION) > 0) {
-        event = &nextEvent.motion;
-
-        // Ignore synthetic mouse events
-        if (event->which != SDL_TOUCH_MOUSEID) {
-            x = event->x;
-            y = event->y;
-            xrel += event->xrel;
-            yrel += event->yrel;
+        if (nextEvent.motion.which == SDL_TOUCH_MOUSEID) {
+            continue;
         }
+        if (m_MultiMonitorEnabled && nextEvent.motion.windowID != sourceWindowID) {
+            // Put back events from a different window
+            SDL_PeepEvents(&nextEvent, 1, SDL_ADDEVENT, 0, 0);
+            break;
+        }
+        x = nextEvent.motion.x;
+        y = nextEvent.motion.y;
+        xrel += nextEvent.motion.xrel;
+        yrel += nextEvent.motion.yrel;
     }
 
     // We should not reference the original event anymore
     event = nullptr;
 
     if (m_AbsoluteMouseMode) {
+        // Resolve which visible window this event came from
+        SDL_Window* activeWin = getWindowForEvent(sourceWindowID);
         int windowWidth, windowHeight;
-        SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
+        SDL_GetWindowSize(activeWin, &windowWidth, &windowHeight);
 
-        // Multi-monitor: determine which window the cursor is in and apply X offset.
-        // m_MultiMonitorWindows contains ALL visible windows (monitors 0, 1, 2, ...).
+        // Multi-monitor: compute X offset based on which monitor window this is
         int multiMonitorXOffset = 0;
         if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
-            int gx, gy;
-            SDL_GetGlobalMouseState(&gx, &gy);
-
-            for (int i = 0; i < m_MultiMonitorWindows.size(); i++) {
-                if (m_MultiMonitorWindows[i]) {
-                    int wx, wy, ww, wh;
-                    SDL_GetWindowPosition(m_MultiMonitorWindows[i], &wx, &wy);
-                    SDL_GetWindowSize(m_MultiMonitorWindows[i], &ww, &wh);
-                    if (gx >= wx && gx < wx + ww && gy >= wy && gy < wy + wh) {
-                        multiMonitorXOffset = i * m_PerMonitorWidth;
-                        windowWidth = ww;
-                        windowHeight = wh;
-                        break;
-                    }
-                }
-            }
+            multiMonitorXOffset = getMonitorIndex(activeWin) * m_PerMonitorWidth;
         }
 
         SDL_Rect src, dst;
         bool mouseInVideoRegion;
 
+        // In multi-monitor mode, each window shows one monitor's slice
         src.x = src.y = 0;
-        src.w = m_StreamWidth;
-        src.h = m_StreamHeight;
+        if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
+            src.w = m_PerMonitorWidth;
+            src.h = m_PerMonitorHeight;
+        } else {
+            src.w = m_StreamWidth;
+            src.h = m_StreamHeight;
+        }
 
         dst.x = dst.y = 0;
         dst.w = windowWidth;
@@ -157,8 +155,7 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         }
         if (mouseInVideoRegion || m_MouseWasInVideoRegion || m_PendingMouseButtonsAllUpOnVideoRegionLeave) {
             if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
-                // In multi-monitor mode, send coordinates in the combined virtual desktop space.
-                // The x coordinate needs the monitor offset, and the destination width is the full combined stream width.
+                // In multi-monitor mode, send coordinates in the combined virtual desktop space
                 LiSendMousePositionEvent((short)(x + multiMonitorXOffset), (short)y, m_StreamWidth, m_StreamHeight);
             } else {
                 LiSendMousePositionEvent((short)x, (short)y, dst.w, dst.h);
@@ -169,8 +166,6 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         if (mouseInVideoRegion ^ m_MouseWasInVideoRegion) {
             SDL_ShowCursor((mouseInVideoRegion && m_MouseCursorCapturedVisibilityState == SDL_DISABLE) ? SDL_DISABLE : SDL_ENABLE);
             if (!mouseInVideoRegion && buttonState != 0) {
-                // If we still have a button pressed on leave, wait for that to come up
-                // before we stop sending mouse position events.
                 m_PendingMouseButtonsAllUpOnVideoRegionLeave = true;
             }
         }
@@ -268,12 +263,17 @@ bool SdlInputHandler::isMouseInVideoRegion(int mouseX, int mouseY, int windowWid
     SDL_Rect src, dst;
 
     if (windowWidth < 0 || windowHeight < 0) {
-        SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
+        SDL_GetWindowSize(getActiveWindow(), &windowWidth, &windowHeight);
     }
 
     src.x = src.y = 0;
-    src.w = m_StreamWidth;
-    src.h = m_StreamHeight;
+    if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
+        src.w = m_PerMonitorWidth;
+        src.h = m_PerMonitorHeight;
+    } else {
+        src.w = m_StreamWidth;
+        src.h = m_StreamHeight;
+    }
 
     dst.x = dst.y = 0;
     dst.w = windowWidth;
@@ -297,44 +297,50 @@ void SdlInputHandler::updatePointerRegionLock()
     // toggled it themselves using the keyboard shortcut. If that's the case, they
     // have full control over it and we don't touch it anymore.
     if (!m_PointerRegionLockToggledByUser) {
-        // Lock the pointer in true full-screen mode or in any fullscreen mode when only a single monitor is present
-        Uint32 fullscreenFlags = SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN_DESKTOP;
+        Uint32 fullscreenFlags = SDL_GetWindowFlags(getActiveWindow()) & SDL_WINDOW_FULLSCREEN_DESKTOP;
         m_PointerRegionLockActive = (fullscreenFlags == SDL_WINDOW_FULLSCREEN) ||
                                     (fullscreenFlags != 0 && SDL_GetNumVideoDisplays() == 1);
     }
 
-    // If region lock is enabled, grab the cursor so it can't accidentally leave our window.
-    if (isCaptureActive() && m_PointerRegionLockActive) {
+    // Helper to apply or release pointer lock on a single window
+    auto applyLock = [this](SDL_Window* win, bool lock) {
+        if (lock) {
 #if SDL_VERSION_ATLEAST(2, 0, 18)
-        SDL_Rect src, dst;
-
-        src.x = src.y = 0;
-        src.w = m_StreamWidth;
-        src.h = m_StreamHeight;
-
-        dst.x = dst.y = 0;
-        SDL_GetWindowSize(m_Window, &dst.w, &dst.h);
-
-        // Use the stream and window sizes to determine the video region
-        StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
-
-        // SDL 2.0.18 lets us lock the cursor to a specific region
-        SDL_SetWindowMouseRect(m_Window, &dst);
+            SDL_Rect src, dst;
+            src.x = src.y = 0;
+            if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
+                src.w = m_PerMonitorWidth;
+                src.h = m_PerMonitorHeight;
+            } else {
+                src.w = m_StreamWidth;
+                src.h = m_StreamHeight;
+            }
+            dst.x = dst.y = 0;
+            SDL_GetWindowSize(win, &dst.w, &dst.h);
+            StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+            SDL_SetWindowMouseRect(win, &dst);
 #elif SDL_VERSION_ATLEAST(2, 0, 15)
-        // SDL 2.0.15 only lets us lock the cursor to the whole window
-        SDL_SetWindowMouseGrab(m_Window, SDL_TRUE);
+            SDL_SetWindowMouseGrab(win, SDL_TRUE);
 #else
-        SDL_SetWindowGrab(m_Window, SDL_TRUE);
+            SDL_SetWindowGrab(win, SDL_TRUE);
 #endif
-    }
-    else {
-        // Allow the cursor to leave the bounds of our video region or window
+        } else {
 #if SDL_VERSION_ATLEAST(2, 0, 18)
-        SDL_SetWindowMouseRect(m_Window, nullptr);
+            SDL_SetWindowMouseRect(win, nullptr);
 #elif SDL_VERSION_ATLEAST(2, 0, 15)
-        SDL_SetWindowMouseGrab(m_Window, SDL_FALSE);
+            SDL_SetWindowMouseGrab(win, SDL_FALSE);
 #else
-        SDL_SetWindowGrab(m_Window, SDL_FALSE);
+            SDL_SetWindowGrab(win, SDL_FALSE);
 #endif
+        }
+    };
+
+    bool lock = isCaptureActive() && m_PointerRegionLockActive;
+    if (m_MultiMonitorEnabled) {
+        for (auto* win : m_MultiMonitorWindows) {
+            if (win) applyLock(win, lock);
+        }
+    } else {
+        applyLock(m_Window, lock);
     }
 }

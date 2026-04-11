@@ -205,7 +205,12 @@ private:
     static
     Uint32 dragTimerCallback(Uint32 interval, void* param);
 
+    SDL_Window* getActiveWindow();
+    SDL_Window* getWindowForEvent(Uint32 windowID);
+    int getMonitorIndex(SDL_Window* window);
+
     SDL_Window* m_Window;
+    SDL_Window* m_ActiveWindow = nullptr;
     bool m_MultiController;
     bool m_GamepadMouse;
     bool m_SwapMouseButtons;
