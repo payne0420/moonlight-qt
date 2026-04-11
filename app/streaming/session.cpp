@@ -7,6 +7,8 @@
 #include "SDL_compat.h"
 #include "utils.h"
 
+#include <algorithm>
+
 #ifdef HAVE_FFMPEG
 #include "video/ffmpeg.h"
 #endif
@@ -1892,12 +1894,37 @@ void Session::exec()
     // which hardware renderer is used (SdlRenderer, VTMetal, etc.).
     if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
         int numDisplays = SDL_GetNumVideoDisplays();
+        int windowCount = qMin(m_MultiMonitorCount, numDisplays);
 
-        // Create windows for ALL monitors (0 through N-1)
-        for (int i = 0; i < m_MultiMonitorCount && i < numDisplays; i++) {
+        // Sort display indices by physical X position (left-to-right) so the
+        // composite frame slices match the client's display layout. The server
+        // composites monitors side-by-side: slice 0 is the leftmost. By placing
+        // window 0 on the physically leftmost display, the spatial mapping is
+        // correct regardless of SDL's display numbering.
+        QVector<int> sortedDisplays;
+        for (int i = 0; i < numDisplays; i++) {
+            sortedDisplays.append(i);
+        }
+        std::sort(sortedDisplays.begin(), sortedDisplays.end(), [](int a, int b) {
+            SDL_Rect boundsA, boundsB;
+            if (SDL_GetDisplayBounds(a, &boundsA) != 0) boundsA.x = a * 10000;
+            if (SDL_GetDisplayBounds(b, &boundsB) != 0) boundsB.x = b * 10000;
+            return boundsA.x < boundsB.x;
+        });
+
+        // Create windows in left-to-right physical order
+        for (int i = 0; i < windowCount; i++) {
+            int displayIdx = sortedDisplays[i];
             std::string mmWindowName = windowName + " (" + std::to_string(i + 1) + ")";
-            int dx = SDL_WINDOWPOS_CENTERED_DISPLAY(i);
-            int dy = SDL_WINDOWPOS_CENTERED_DISPLAY(i);
+            int dx = SDL_WINDOWPOS_CENTERED_DISPLAY(displayIdx);
+            int dy = SDL_WINDOWPOS_CENTERED_DISPLAY(displayIdx);
+
+            SDL_Rect displayBounds;
+            SDL_GetDisplayBounds(displayIdx, &displayBounds);
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Display %d bounds: x=%d y=%d w=%d h=%d",
+                        displayIdx, displayBounds.x, displayBounds.y,
+                        displayBounds.w, displayBounds.h);
 
             SDL_Window* mmWin = SDL_CreateWindow(
                 mmWindowName.c_str(),
@@ -1916,7 +1943,8 @@ void Session::exec()
             if (mmWin) {
                 m_MonitorWindows.append(mmWin);
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "Created multi-monitor window %d on display %d", i + 1, i);
+                            "Created multi-monitor window %d on display %d (x=%d)",
+                            i + 1, displayIdx, displayBounds.x);
             } else {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                             "Failed to create multi-monitor window %d: %s", i + 1, SDL_GetError());
