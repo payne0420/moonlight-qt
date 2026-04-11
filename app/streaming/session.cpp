@@ -3,6 +3,8 @@
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
 
+#include <algorithm>
+
 #include <Limelight.h>
 #include "SDL_compat.h"
 #include "utils.h"
@@ -1875,6 +1877,57 @@ void Session::exec()
 
     m_InputHandler->setWindow(m_Window);
 
+    // Multi-monitor: create additional windows on adjacent displays
+    if (m_NumVideoStreams > 1) {
+        int numDisplays = SDL_GetNumVideoDisplays();
+        int windowCount = qMin(m_NumVideoStreams, numDisplays);
+
+        // Sort display indices by physical X position (left to right)
+        QVector<int> sortedDisplays;
+        for (int i = 0; i < numDisplays; i++) {
+            sortedDisplays.append(i);
+        }
+        std::sort(sortedDisplays.begin(), sortedDisplays.end(), [](int a, int b) {
+            SDL_Rect boundsA, boundsB;
+            if (SDL_GetDisplayBounds(a, &boundsA) != 0) boundsA.x = a * 10000;
+            if (SDL_GetDisplayBounds(b, &boundsB) != 0) boundsB.x = b * 10000;
+            return boundsA.x < boundsB.x;
+        });
+
+        // Window 0 = primary (m_Window), windows 1+ are new
+        m_MonitorWindows.append(m_Window);
+        for (int i = 1; i < windowCount; i++) {
+            int displayIdx = sortedDisplays[i];
+            std::string mmWindowName = windowName + " (" + std::to_string(i + 1) + ")";
+            SDL_Window* mmWin = SDL_CreateWindow(
+                mmWindowName.c_str(),
+                SDL_WINDOWPOS_CENTERED_DISPLAY(displayIdx),
+                SDL_WINDOWPOS_CENTERED_DISPLAY(displayIdx),
+                m_PerMonitorWidth, m_PerMonitorHeight,
+                defaultWindowFlags | StreamUtils::getPlatformWindowFlags());
+            if (!mmWin) {
+                mmWin = SDL_CreateWindow(
+                    mmWindowName.c_str(),
+                    SDL_WINDOWPOS_CENTERED_DISPLAY(displayIdx),
+                    SDL_WINDOWPOS_CENTERED_DISPLAY(displayIdx),
+                    m_PerMonitorWidth, m_PerMonitorHeight,
+                    defaultWindowFlags);
+            }
+            if (mmWin) {
+                m_MonitorWindows.append(mmWin);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Created multi-monitor window %d on display %d", i + 1, displayIdx);
+            }
+        }
+
+        // Wire up input handler for multi-monitor
+        m_InputHandler->setMultiMonitor(true, m_NumVideoStreams,
+            m_PerMonitorWidth, m_PerMonitorHeight, m_MonitorWindows);
+
+        qInfo() << "Multi-monitor:" << m_MonitorWindows.size()
+                << "windows for" << m_NumVideoStreams << "streams";
+    }
+
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
     QImage svgImage(ICON_SIZE, ICON_SIZE, QImage::Format_RGBA8888);
     svgImage.fill(0);
@@ -1903,6 +1956,11 @@ void Session::exec()
     // Enter full screen if requested
     if (m_IsFullScreen) {
         SDL_SetWindowFullscreen(m_Window, m_FullScreenFlag);
+        for (auto* mmWin : m_MonitorWindows) {
+            if (mmWin && mmWin != m_Window) {
+                SDL_SetWindowFullscreen(mmWin, m_FullScreenFlag);
+            }
+        }
     }
 
     bool needsFirstEnterCapture = false;
@@ -2357,6 +2415,14 @@ DispatchDeferredCleanup:
         }
 #endif
     }
+
+    // Destroy multi-monitor extra windows (skip index 0 which is m_Window)
+    for (int i = 1; i < m_MonitorWindows.size(); i++) {
+        if (m_MonitorWindows[i]) {
+            SDL_DestroyWindow(m_MonitorWindows[i]);
+        }
+    }
+    m_MonitorWindows.clear();
 
     // This must be called after the decoder is deleted, because
     // the renderer may want to interact with the window
