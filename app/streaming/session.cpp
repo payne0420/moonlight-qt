@@ -206,9 +206,14 @@ void Session::clSetHdrMode(bool enabled)
     // this callback, we'll drop it. The main thread will make the
     // callback when it finishes creating the new decoder.
     if (SDL_TryLockMutex(s_ActiveSession->m_DecoderLock) == 0) {
-        IVideoDecoder* decoder = s_ActiveSession->m_VideoDecoder;
-        if (decoder != nullptr) {
-            decoder->setHdrMode(enabled);
+        if (s_ActiveSession->m_VideoDecoder != nullptr) {
+            s_ActiveSession->m_VideoDecoder->setHdrMode(enabled);
+        }
+        // Apply to every per-stream decoder so all monitors transition together.
+        for (auto& vs : s_ActiveSession->m_VideoStreams) {
+            if (vs.decoder != nullptr) {
+                vs.decoder->setHdrMode(enabled);
+            }
         }
         SDL_UnlockMutex(s_ActiveSession->m_DecoderLock);
     }
@@ -279,7 +284,8 @@ void Session::clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlag
 
 bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
                             SDL_Window* window, int videoFormat, int width, int height,
-                            int frameRate, bool enableVsync, bool enableFramePacing, bool testOnly, IVideoDecoder*& chosenDecoder)
+                            int frameRate, bool enableVsync, bool enableFramePacing, bool testOnly,
+                            int streamIndex, IVideoDecoder*& chosenDecoder)
 {
     DECODER_PARAMETERS params;
 
@@ -297,14 +303,7 @@ bool Session::chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
     params.enableFramePacing = enableFramePacing;
     params.testOnly = testOnly;
     params.vds = vds;
-    if (s_ActiveSession) {
-        params.extraMonitorWindows = s_ActiveSession->m_MonitorWindows;
-        params.perMonitorWidth = s_ActiveSession->m_PerMonitorWidth;
-        params.perMonitorHeight = s_ActiveSession->m_PerMonitorHeight;
-    } else {
-        params.perMonitorWidth = 0;
-        params.perMonitorHeight = 0;
-    }
+    params.streamIndex = streamIndex;
 
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "V-sync %s",
@@ -504,7 +503,7 @@ Session::getDecoderAvailability(SDL_Window* window,
 {
     IVideoDecoder* decoder;
 
-    if (!chooseDecoder(vds, window, videoFormat, width, height, frameRate, false, false, true, decoder)) {
+    if (!chooseDecoder(vds, window, videoFormat, width, height, frameRate, false, false, true, 0, decoder)) {
         return DecoderAvailability::None;
     }
 
@@ -525,7 +524,7 @@ bool Session::populateDecoderProperties(SDL_Window* window)
                        m_StreamConfig.width,
                        m_StreamConfig.height,
                        m_StreamConfig.fps,
-                       false, false, true, decoder)) {
+                       false, false, true, 0, decoder)) {
         return false;
     }
 
@@ -652,30 +651,42 @@ bool Session::initialize(QQuickWindow* qtWindow)
 
     LiInitializeStreamConfiguration(&m_StreamConfig);
 
-    // Multi-monitor: compute combined resolution
+    // Multi-monitor: determine how many independent video streams we will actually run.
+    // moonlight-common-c caps independent streams at MAX_VIDEO_STREAMS (4), and we can
+    // only display as many monitors as the client physically has. Clamp the requested
+    // count to both so the host's encoded stream count and our window count agree --
+    // a mismatch leaves streams with no decoder/window and corrupts stream 0.
+    const int kMaxMultiMonitorStreams = 4;  // must not exceed moonlight-common-c MAX_VIDEO_STREAMS
+    int requestedMonitorCount = 1;
     if (m_Preferences->multiMonitorEnabled && m_Preferences->multiMonitorCount > 1) {
+        int maxStreams = qMin(SDL_GetNumVideoDisplays(), kMaxMultiMonitorStreams);
+        requestedMonitorCount = qMax(1, qMin(m_Preferences->multiMonitorCount, maxStreams));
+    }
+
+    if (requestedMonitorCount > 1) {
         m_MultiMonitorEnabled = true;
-        m_MultiMonitorCount = m_Preferences->multiMonitorCount;
+        m_MultiMonitorCount = requestedMonitorCount;
         m_PerMonitorWidth = m_Preferences->width;
         m_PerMonitorHeight = m_Preferences->height;
 
-        // Hardware encoders (NVENC, AMF, QSV) typically cannot encode frames wider
-        // than 8192 pixels. If the combined multi-monitor resolution exceeds this,
-        // scale down per-monitor dimensions proportionally to fit.
-        const int MAX_ENCODE_WIDTH = 8192;
-        int combinedWidth = m_PerMonitorWidth * m_MultiMonitorCount;
-        if (combinedWidth > MAX_ENCODE_WIDTH) {
-            int cappedPerWidth = (MAX_ENCODE_WIDTH / m_MultiMonitorCount) & ~1;
-            float scale = (float)cappedPerWidth / m_PerMonitorWidth;
-            int cappedPerHeight = (int)(m_PerMonitorHeight * scale) & ~1;
+        // Each monitor is encoded by its own independent encode session, so the
+        // hardware encoder's max frame size (~8192 px for HEVC/AV1) applies PER
+        // STREAM -- not to the combined width. Three 3840-wide monitors (combined
+        // 11520) are perfectly legal because each 3840-wide encode is well under
+        // the limit. Cap each per-monitor dimension on its own.
+        const int MAX_ENCODE_DIM = 8192;
+        if (m_PerMonitorWidth > MAX_ENCODE_DIM || m_PerMonitorHeight > MAX_ENCODE_DIM) {
+            float scale = qMin((float)MAX_ENCODE_DIM / m_PerMonitorWidth,
+                               (float)MAX_ENCODE_DIM / m_PerMonitorHeight);
+            int cappedWidth = (int)(m_PerMonitorWidth * scale) & ~1;
+            int cappedHeight = (int)(m_PerMonitorHeight * scale) & ~1;
 
-            qWarning() << "Combined resolution" << combinedWidth << "x" << m_PerMonitorHeight
-                       << "exceeds encoder max width" << MAX_ENCODE_WIDTH
-                       << "- scaling per-monitor from" << m_PerMonitorWidth << "x" << m_PerMonitorHeight
-                       << "to" << cappedPerWidth << "x" << cappedPerHeight;
+            qWarning() << "Per-monitor resolution" << m_PerMonitorWidth << "x" << m_PerMonitorHeight
+                       << "exceeds encoder max dimension" << MAX_ENCODE_DIM
+                       << "- scaling to" << cappedWidth << "x" << cappedHeight;
 
-            m_PerMonitorWidth = cappedPerWidth;
-            m_PerMonitorHeight = cappedPerHeight;
+            m_PerMonitorWidth = cappedWidth;
+            m_PerMonitorHeight = cappedHeight;
         }
 
         // Each stream carries per-monitor resolution, not the combined width.
@@ -1566,6 +1577,16 @@ void Session::toggleFullscreen()
         if (mmWin) SDL_SetWindowFullscreen(mmWin, fullScreen ? m_FullScreenFlag : 0);
     }
 
+#if defined(Q_OS_WIN32) || defined(Q_OS_DARWIN)
+    // The decoders were destroyed above. In multi-monitor mode m_Window is hidden and
+    // may not emit a window event to drive recreation, so request it explicitly.
+    if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
+        SDL_Event recreateEvent = {};
+        recreateEvent.type = SDL_RENDER_DEVICE_RESET;
+        SDL_PushEvent(&recreateEvent);
+    }
+#endif
+
 #ifdef Q_OS_DARWIN
     // SDL on macOS has a bug that causes the window size to be reset to crazy
     // large dimensions when exiting out of true fullscreen mode. We can work
@@ -1935,16 +1956,20 @@ void Session::exec()
         // composites monitors side-by-side: slice 0 is the leftmost. By placing
         // window 0 on the physically leftmost display, the spatial mapping is
         // correct regardless of SDL's display numbering.
-        QVector<int> sortedDisplays;
+        // Resolve each display's left edge once, then sort. Calling SDL_GetDisplayBounds()
+        // inside the comparator risks an inconsistent ordering (undefined behavior in
+        // std::sort) if it ever returns different results across calls.
+        QVector<QPair<int, int>> displayKeys;  // (left-edge X, display index)
         for (int i = 0; i < numDisplays; i++) {
-            sortedDisplays.append(i);
+            SDL_Rect bounds;
+            int key = (SDL_GetDisplayBounds(i, &bounds) == 0) ? bounds.x : (i * 100000);
+            displayKeys.append(qMakePair(key, i));
         }
-        std::sort(sortedDisplays.begin(), sortedDisplays.end(), [](int a, int b) {
-            SDL_Rect boundsA, boundsB;
-            if (SDL_GetDisplayBounds(a, &boundsA) != 0) boundsA.x = a * 10000;
-            if (SDL_GetDisplayBounds(b, &boundsB) != 0) boundsB.x = b * 10000;
-            return boundsA.x < boundsB.x;
-        });
+        std::sort(displayKeys.begin(), displayKeys.end());
+        QVector<int> sortedDisplays;
+        for (const auto& dk : displayKeys) {
+            sortedDisplays.append(dk.second);
+        }
 
         // Create windows in left-to-right physical order
         for (int i = 0; i < windowCount; i++) {
@@ -1992,12 +2017,16 @@ void Session::exec()
                 << "windows for" << m_MultiMonitorCount << "monitors";
 
         // Pre-populate m_VideoStreams so the frame routing logic has slots ready.
-        // Decoders will be created after the primary decoder is initialized.
+        // Decoders are created later. Hold m_DecoderLock: drSubmitDecodeUnit() may
+        // already be reading m_VideoStreams from the callback thread, and resize()
+        // reallocates the backing store.
+        SDL_LockMutex(m_DecoderLock);
         m_VideoStreams.resize(m_MultiMonitorCount);
         for (int i = 0; i < m_MultiMonitorCount && i < m_MonitorWindows.size(); i++) {
             m_VideoStreams[i].window = m_MonitorWindows[i];
             m_VideoStreams[i].streamIndex = i;
         }
+        SDL_UnlockMutex(m_DecoderLock);
     }
 
     m_InputHandler->setWindow(m_Window);
@@ -2011,9 +2040,9 @@ void Session::exec()
             m_PerMonitorHeight,
             m_MonitorWindows);
 
-        // With multi-stream region splitting, each stream arrives at per-monitor
-        // resolution, so the old client-side frame splitting (setMultiMonitorWindows)
-        // is no longer needed. Each stream has its own decoder rendering to its own window.
+        // With multi-stream region streaming, each stream arrives already cropped to
+        // its monitor's resolution, so no client-side frame splitting is needed: each
+        // stream has its own decoder rendering the whole frame into its own window.
     }
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
@@ -2145,10 +2174,16 @@ void Session::exec()
         case SDL_USEREVENT:
             switch (event.user.code) {
             case SDL_CODE_FRAME_READY:
-                if (m_VideoDecoder != nullptr) {
-                    m_VideoDecoder->renderFrameOnMainThread();
+            {
+                // The Pacer tags the event with its owning decoder so the correct
+                // per-stream decoder is rendered (falls back to the primary).
+                IVideoDecoder* readyDecoder = event.user.data1 != nullptr ?
+                    static_cast<IVideoDecoder*>(event.user.data1) : m_VideoDecoder;
+                if (readyDecoder != nullptr) {
+                    readyDecoder->renderFrameOnMainThread();
                 }
                 break;
+            }
             case SDL_CODE_FLUSH_WINDOW_EVENT_BARRIER:
                 m_FlushingWindowEventsRef--;
                 break;
@@ -2371,12 +2406,18 @@ void Session::exec()
 
                 // Choose a new decoder (hopefully the same one, but possibly
                 // not if a GPU was removed or something).
+                // In multi-monitor mode the primary decoder serves stream 0 and must
+                // render into a visible monitor window -- m_Window is hidden.
+                SDL_Window* primaryDecoderWindow =
+                    (m_MultiMonitorEnabled && !m_MonitorWindows.isEmpty())
+                        ? m_MonitorWindows[0] : m_Window;
                 if (!chooseDecoder(m_Preferences->videoDecoderSelection,
-                                   m_Window, m_ActiveVideoFormat, m_ActiveVideoWidth,
+                                   primaryDecoderWindow, m_ActiveVideoFormat, m_ActiveVideoWidth,
                                    m_ActiveVideoHeight, m_ActiveVideoFrameRate,
                                    enableVsync,
                                    enableVsync && m_Preferences->framePacing,
                                    false,
+                                   0,
                                    s_ActiveSession->m_VideoDecoder)) {
                     SDL_UnlockMutex(m_DecoderLock);
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -2416,6 +2457,7 @@ void Session::exec()
                                           secEnableVsync,
                                           secEnableVsync && m_Preferences->framePacing,
                                           false,
+                                          i,
                                           secDecoder)) {
                             m_VideoStreams[i].decoder = secDecoder;
                             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -2440,7 +2482,15 @@ void Session::exec()
 
             // Set HDR mode. We may miss the callback if we're in the middle
             // of recreating our decoder at the time the HDR transition happens.
-            m_VideoDecoder->setHdrMode(LiGetCurrentHostDisplayHdrMode());
+            {
+                bool hdrMode = LiGetCurrentHostDisplayHdrMode();
+                m_VideoDecoder->setHdrMode(hdrMode);
+                for (auto& vs : m_VideoStreams) {
+                    if (vs.decoder != nullptr) {
+                        vs.decoder->setHdrMode(hdrMode);
+                    }
+                }
+            }
 
             // After a window resize, we need to reset the pointer lock region
             m_InputHandler->updatePointerRegionLock();
@@ -2576,7 +2626,6 @@ DispatchDeferredCleanup:
         }
     }
     m_MonitorWindows.clear();
-    m_MonitorRenderers.clear();
 
     // This must be called after the decoder is deleted, because
     // the renderer may want to interact with the window

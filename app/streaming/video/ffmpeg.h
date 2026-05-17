@@ -29,8 +29,6 @@ public:
     virtual void renderFrameOnMainThread() override;
     virtual void setHdrMode(bool enabled) override;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) override;
-    virtual void setMultiMonitorWindows(const QVector<SDL_Window*>& windows,
-                                        int perMonitorWidth, int perMonitorHeight) override;
 
     virtual IFFmpegRenderer* getBackendRenderer();
 
@@ -135,18 +133,8 @@ private:
     SDL_Thread* m_DecoderThread;
     SDL_atomic_t m_DecoderThreadShouldQuit;
 
-    // Multi-monitor extra window rendering (owned by decoder, renderer-agnostic)
-    struct ExtraMonitorState {
-        SDL_Window* window = nullptr;
-        SDL_Renderer* renderer = nullptr;
-        SDL_Texture* texture = nullptr;
-    };
-    QVector<ExtraMonitorState> m_ExtraMonitors;
-    int m_PerMonitorWidth = 0;
-    int m_PerMonitorHeight = 0;
-    int m_MonitorCount = 1;
-    void renderExtraMonitors(AVFrame* frame);
-    void cleanupExtraMonitors();
+    // Multi-stream: 0-based index of the video stream this decoder serves.
+    int m_StreamIndex;
 
     // Data buffers in the queued DU are not valid
     QQueue<DECODE_UNIT> m_FrameInfoQueue;

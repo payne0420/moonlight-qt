@@ -236,7 +236,8 @@ FFmpegVideoDecoder::FFmpegVideoDecoder(bool testOnly)
       m_NeedsSpsFixup(false),
       m_TestOnly(testOnly),
       m_CurrentTestMode(TestMode::TestFrameOnly),
-      m_DecoderThread(nullptr)
+      m_DecoderThread(nullptr),
+      m_StreamIndex(0)
 {
     SDL_zero(m_ActiveWndVideoStats);
     SDL_zero(m_LastWndVideoStats);
@@ -497,6 +498,9 @@ bool FFmpegVideoDecoder::completeInitialization(const AVCodec* decoder, enum AVP
     // Don't bother initializing Pacer if we're not actually going to render
     if (testMode != TestMode::TestFrameOnly) {
         m_Pacer = new Pacer(m_FrontendRenderer, &m_ActiveWndVideoStats);
+        // Tag main-thread-render events with this decoder so Session renders the
+        // correct per-stream decoder.
+        m_Pacer->setFrameReadyContext(static_cast<IVideoDecoder*>(this));
         if (!m_Pacer->initialize(params->window, params->frameRate,
                                  params->enableFramePacing || (params->enableVsync && (m_FrontendRenderer->getRendererAttributes() & RENDERER_ATTRIBUTE_FORCE_PACING)))) {
             return false;
@@ -1633,6 +1637,10 @@ bool FFmpegVideoDecoder::initialize(PDECODER_PARAMETERS params)
     // Increase log level until the first frame is decoded
     av_log_set_level(AV_LOG_DEBUG);
 
+    // Remember which video stream (monitor region) this decoder serves so its
+    // decode thread pulls from the matching per-stream decode unit queue.
+    m_StreamIndex = params->streamIndex;
+
     // First try decoders that the user has manually specified via environment variables.
     // These must output surfaces in one of the formats that one of our renderers supports,
     // which is currently:
@@ -1833,7 +1841,7 @@ void FFmpegVideoDecoder::decoderThreadProc()
 
             // Waiting for input. All output frames have been received.
             // Block until we receive a new frame from the host.
-            if (!LiWaitForNextVideoFrame(&handle, &du)) {
+            if (!LiWaitForNextVideoFrameForStream(m_StreamIndex, &handle, &du)) {
                 // This might be a signal from the main thread to exit
                 continue;
             }
@@ -1955,7 +1963,7 @@ void FFmpegVideoDecoder::decoderThreadProc()
 
                     // No output data, so let's try to submit more input data,
                     // while we're waiting for this to frame to come back.
-                    if (LiPollNextVideoFrame(&handle, &du)) {
+                    if (LiPollNextVideoFrameForStream(m_StreamIndex, &handle, &du)) {
                         // FIXME: Handle EAGAIN on avcodec_send_packet() properly?
                         LiCompleteVideoFrame(handle, submitDecodeUnit(du));
                     }
@@ -2127,139 +2135,5 @@ int FFmpegVideoDecoder::submitDecodeUnit(PDECODE_UNIT du)
 void FFmpegVideoDecoder::renderFrameOnMainThread()
 {
     m_Pacer->renderOnMainThread();
-}
-
-void FFmpegVideoDecoder::cleanupExtraMonitors()
-{
-    for (auto& em : m_ExtraMonitors) {
-        if (em.texture) SDL_DestroyTexture(em.texture);
-        if (em.renderer) SDL_DestroyRenderer(em.renderer);
-    }
-    m_ExtraMonitors.clear();
-    if (m_Pacer) {
-        m_Pacer->setPostRenderCallback(nullptr, nullptr);
-    }
-}
-
-void FFmpegVideoDecoder::setMultiMonitorWindows(const QVector<SDL_Window*>& windows,
-                                                 int perMonitorWidth, int perMonitorHeight)
-{
-    cleanupExtraMonitors();
-
-    m_PerMonitorWidth = perMonitorWidth;
-    m_PerMonitorHeight = perMonitorHeight;
-    m_MonitorCount = windows.size();
-
-    // ALL visible windows are rendered here via the post-render callback.
-    // This works regardless of which primary renderer is used (SdlRenderer, VTMetal, etc.)
-    // The primary renderer's window is hidden; visible output goes through these SDL renderers.
-    for (SDL_Window* win : windows) {
-        ExtraMonitorState em;
-        em.window = win;
-        em.renderer = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
-        if (!em.renderer) {
-            em.renderer = SDL_CreateRenderer(win, -1, 0);
-        }
-        em.texture = nullptr;
-        m_ExtraMonitors.append(em);
-    }
-
-    // Register a post-render callback so we get each frame after primary rendering
-    if (m_Pacer && !m_ExtraMonitors.isEmpty()) {
-        m_Pacer->setPostRenderCallback([](AVFrame* frame, void* ctx) {
-            static_cast<FFmpegVideoDecoder*>(ctx)->renderExtraMonitors(frame);
-        }, this);
-    }
-
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "Multi-monitor decoder: %d total windows (%d extra), %dx%d per monitor",
-                m_MonitorCount, m_ExtraMonitors.size(), m_PerMonitorWidth, m_PerMonitorHeight);
-}
-
-void FFmpegVideoDecoder::renderExtraMonitors(AVFrame* frame)
-{
-    if (!frame || m_ExtraMonitors.isEmpty()) return;
-
-    // If the frame is in hardware memory, we need a software copy
-    AVFrame* swFrame = nullptr;
-    AVFrame* renderFrame = frame;
-    if (frame->hw_frames_ctx != nullptr) {
-        swFrame = av_frame_alloc();
-        if (av_hwframe_transfer_data(swFrame, frame, 0) < 0) {
-            av_frame_free(&swFrame);
-            return;
-        }
-        renderFrame = swFrame;
-    }
-
-    for (int i = 0; i < m_ExtraMonitors.size(); i++) {
-        auto& em = m_ExtraMonitors[i];
-        if (!em.renderer) continue;
-
-        // m_MonitorWindows contains ALL visible windows: monitors 0, 1, 2, ...
-        int monitorIndex = i;
-
-        // Create or recreate texture on format/size change
-        if (!em.texture) {
-            Uint32 pixelFormat;
-            switch (renderFrame->format) {
-            case AV_PIX_FMT_YUV420P:
-            case AV_PIX_FMT_YUVJ420P:
-                pixelFormat = SDL_PIXELFORMAT_YV12;
-                break;
-            case AV_PIX_FMT_NV12:
-                pixelFormat = SDL_PIXELFORMAT_NV12;
-                break;
-            case AV_PIX_FMT_NV21:
-                pixelFormat = SDL_PIXELFORMAT_NV21;
-                break;
-            default:
-                pixelFormat = SDL_PIXELFORMAT_XRGB8888;
-                break;
-            }
-
-            em.texture = SDL_CreateTexture(em.renderer, pixelFormat,
-                                           SDL_TEXTUREACCESS_STREAMING,
-                                           renderFrame->width, renderFrame->height);
-            if (!em.texture) continue;
-            SDL_SetTextureBlendMode(em.texture, SDL_BLENDMODE_NONE);
-        }
-
-        // Upload frame data to texture
-        switch (renderFrame->format) {
-        case AV_PIX_FMT_YUV420P:
-        case AV_PIX_FMT_YUVJ420P:
-            SDL_UpdateYUVTexture(em.texture, nullptr,
-                                 renderFrame->data[0], renderFrame->linesize[0],
-                                 renderFrame->data[1], renderFrame->linesize[1],
-                                 renderFrame->data[2], renderFrame->linesize[2]);
-            break;
-        case AV_PIX_FMT_NV12:
-        case AV_PIX_FMT_NV21:
-#if SDL_VERSION_ATLEAST(2, 0, 15)
-            SDL_UpdateNVTexture(em.texture, nullptr,
-                                renderFrame->data[0], renderFrame->linesize[0],
-                                renderFrame->data[1], renderFrame->linesize[1]);
-#endif
-            break;
-        default:
-            continue;
-        }
-
-        // Source rect: this monitor's horizontal slice
-        SDL_Rect srcRect;
-        srcRect.x = monitorIndex * m_PerMonitorWidth;
-        srcRect.y = 0;
-        srcRect.w = m_PerMonitorWidth;
-        srcRect.h = m_PerMonitorHeight;
-
-        SDL_RenderClear(em.renderer);
-        SDL_RenderCopy(em.renderer, em.texture, &srcRect, nullptr);
-        SDL_RenderPresent(em.renderer);
-    }
-
-    if (swFrame) {
-        av_frame_free(&swFrame);
-    }
 }
 

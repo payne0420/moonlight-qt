@@ -716,7 +716,8 @@ Flickable {
                     SpinBox {
                         id: multiMonitorSpinBox
                         from: 2
-                        to: Math.max(2, SystemProperties.getMonitorCount())
+                        // Cap at 4: moonlight-common-c supports at most MAX_VIDEO_STREAMS (4) streams
+                        to: Math.min(4, Math.max(2, SystemProperties.getMonitorCount()))
                         value: StreamingPreferences.multiMonitorCount > 1 ? StreamingPreferences.multiMonitorCount : 2
                         onValueChanged: {
                             StreamingPreferences.multiMonitorCount = value
@@ -726,7 +727,8 @@ Flickable {
                     Button {
                         text: qsTr("Auto-detect (%1)").arg(SystemProperties.getMonitorCount())
                         onClicked: {
-                            var count = SystemProperties.getMonitorCount()
+                            // Cap at 4: moonlight-common-c supports at most MAX_VIDEO_STREAMS (4) streams
+                            var count = Math.min(4, SystemProperties.getMonitorCount())
                             if (count >= 2) {
                                 multiMonitorSpinBox.value = count
                                 StreamingPreferences.multiMonitorCount = count

@@ -115,12 +115,6 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         int windowWidth, windowHeight;
         SDL_GetWindowSize(activeWin, &windowWidth, &windowHeight);
 
-        // Multi-monitor: compute X offset based on which monitor window this is
-        int multiMonitorXOffset = 0;
-        if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
-            multiMonitorXOffset = getMonitorIndex(activeWin) * m_PerMonitorWidth;
-        }
-
         SDL_Rect src, dst;
         bool mouseInVideoRegion;
 
@@ -161,8 +155,15 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         }
         if (mouseInVideoRegion || m_MouseWasInVideoRegion || m_PendingMouseButtonsAllUpOnVideoRegionLeave) {
             if (m_MultiMonitorEnabled && m_MultiMonitorCount > 1) {
-                // In multi-monitor mode, send coordinates in the combined virtual desktop space
-                LiSendMousePositionEvent((short)(x + multiMonitorXOffset), (short)y, m_StreamWidth, m_StreamHeight);
+                // Send coordinates in the host's combined virtual-desktop space. Keep the
+                // coordinate and the reference extent in the same (window destination) unit:
+                // offset x by whole monitor windows and scale the reference width by the
+                // monitor count. The host maps x/referenceWidth onto its combined desktop.
+                // Previously the reference width was the per-monitor width, so the cursor
+                // on monitors 1..N-1 was mapped off the right edge of the host surface.
+                int monitorIndex = getMonitorIndex(activeWin);
+                LiSendMousePositionEvent((short)(x + monitorIndex * dst.w), (short)y,
+                                         (short)(dst.w * m_MultiMonitorCount), (short)dst.h);
             } else {
                 LiSendMousePositionEvent((short)x, (short)y, dst.w, dst.h);
             }

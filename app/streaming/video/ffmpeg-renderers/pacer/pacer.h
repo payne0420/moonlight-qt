@@ -43,13 +43,9 @@ public:
 
     void renderOnMainThread();
 
-    // Called after each frame is rendered by the primary renderer, before deferred free.
-    // The frame is still valid during this callback.
-    typedef void (*PostRenderCallback)(AVFrame* frame, void* context);
-    void setPostRenderCallback(PostRenderCallback cb, void* context) {
-        m_PostRenderCallback = cb;
-        m_PostRenderContext = context;
-    }
+    // Context (the owning IVideoDecoder) carried in the SDL_CODE_FRAME_READY event
+    // so the main thread renders the correct decoder in a multi-stream session.
+    void setFrameReadyContext(void* context) { m_FrameReadyContext = context; }
 
 private:
     static int vsyncThread(void* context);
@@ -82,7 +78,6 @@ private:
     int m_MaxVideoFps;
     int m_DisplayFps;
     PVIDEO_STATS m_VideoStats;
-    PostRenderCallback m_PostRenderCallback = nullptr;
-    void* m_PostRenderContext = nullptr;
+    void* m_FrameReadyContext = nullptr;
     int m_RendererAttributes;
 };

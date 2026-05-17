@@ -186,7 +186,7 @@ private:
     bool chooseDecoder(StreamingPreferences::VideoDecoderSelection vds,
                        SDL_Window* window, int videoFormat, int width, int height,
                        int frameRate, bool enableVsync, bool enableFramePacing,
-                       bool testOnly,
+                       bool testOnly, int streamIndex,
                        IVideoDecoder*& chosenDecoder);
 
     static
@@ -251,7 +251,6 @@ private:
     int m_PerMonitorWidth = 0;
     int m_PerMonitorHeight = 0;
     QVector<SDL_Window*> m_MonitorWindows;
-    QVector<SDL_Renderer*> m_MonitorRenderers;
 
     // Multi-stream: per-stream decoder state for region-based streaming
     struct VideoStreamState {

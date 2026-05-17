@@ -47,10 +47,9 @@ typedef struct _DECODER_PARAMETERS {
     bool enableFramePacing;
     bool testOnly;
 
-    // Multi-monitor: extra windows (one per additional monitor beyond primary)
-    QVector<SDL_Window*> extraMonitorWindows;
-    int perMonitorWidth;
-    int perMonitorHeight;
+    // Multi-stream: 0-based index of the video stream this decoder serves. Each
+    // stream is an independent monitor region with its own decode unit queue.
+    int streamIndex;
 } DECODER_PARAMETERS, *PDECODER_PARAMETERS;
 
 #define WINDOW_STATE_CHANGE_SIZE 0x01
@@ -83,8 +82,4 @@ public:
     virtual void renderFrameOnMainThread() = 0;
     virtual void setHdrMode(bool enabled) = 0;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) = 0;
-    virtual void setMultiMonitorWindows(const QVector<SDL_Window*>& windows,
-                                        int perMonitorWidth, int perMonitorHeight) {
-        Q_UNUSED(windows); Q_UNUSED(perMonitorWidth); Q_UNUSED(perMonitorHeight);
-    }
 };

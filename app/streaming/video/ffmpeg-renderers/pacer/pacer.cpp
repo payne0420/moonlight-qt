@@ -189,9 +189,12 @@ void Pacer::enqueueFrameForRenderingAndUnlock(AVFrame *frame)
     else {
         SDL_Event event;
 
-        // For main thread rendering, we'll push an event to trigger a callback
+        // For main thread rendering, we'll push an event to trigger a callback.
+        // data1 carries the owning decoder so the main thread renders the right
+        // one in a multi-stream session.
         event.type = SDL_USEREVENT;
         event.user.code = SDL_CODE_FRAME_READY;
+        event.user.data1 = m_FrameReadyContext;
         SDL_PushEvent(&event);
     }
 }
@@ -337,11 +340,6 @@ void Pacer::renderFrame(AVFrame* frame)
 
     // Render it
     m_VsyncRenderer->renderFrame(frame);
-
-    // Notify post-render callback (e.g. multi-monitor extra windows)
-    if (m_PostRenderCallback) {
-        m_PostRenderCallback(frame, m_PostRenderContext);
-    }
 
     uint64_t afterRender = LiGetMicroseconds();
 
