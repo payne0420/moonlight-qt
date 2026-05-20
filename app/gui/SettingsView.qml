@@ -751,9 +751,33 @@ Flickable {
                 Label {
                     width: parent.width
                     id: bitrateTitle
+                    // Each per-monitor encoder runs at the full bitrate, so when
+                    // multi-monitor is enabled the total wire bandwidth is the
+                    // slider value times the monitor count. Surfacing the math
+                    // here keeps users from being surprised when they pick e.g.
+                    // 50 Mbps with 3 monitors and see ~150 Mbps on the link.
+                    function refreshTitle() {
+                        var mbps = StreamingPreferences.bitrateKbps / 1000.0
+                        if (StreamingPreferences.multiMonitorEnabled && StreamingPreferences.multiMonitorCount > 1) {
+                            var count = StreamingPreferences.multiMonitorCount
+                            text = qsTr("Video bitrate: %1 Mbps per monitor (×%2 monitors = %3 Mbps total)")
+                                .arg(mbps).arg(count).arg((mbps * count).toFixed(1))
+                        } else {
+                            text = qsTr("Video bitrate: %1 Mbps").arg(mbps)
+                        }
+                    }
                     text: qsTr("Video bitrate:")
                     font.pointSize: 12
                     wrapMode: Text.Wrap
+                    Connections {
+                        target: StreamingPreferences
+                        function onMultiMonitorChanged() { bitrateTitle.refreshTitle() }
+                        function onBitrateChanged() { bitrateTitle.refreshTitle() }
+                    }
+                    Component.onCompleted: {
+                        refreshTitle()
+                        languageChanged.connect(refreshTitle)
+                    }
                 }
 
                 Label {
@@ -781,17 +805,12 @@ Flickable {
                         width: Math.min(bitrateDesc.implicitWidth, parent.width - (resetBitrateButton.visible ? resetBitrateButton.width + parent.spacing : 0))
 
                         onValueChanged: {
-                            bitrateTitle.text = qsTr("Video bitrate: %1 Mbps").arg(value / 1000.0)
+                            // refreshTitle() runs from the bitrateChanged Connection
                             StreamingPreferences.bitrateKbps = value
                         }
 
                         onMoved: {
                             StreamingPreferences.autoAdjustBitrate = false
-                        }
-
-                        Component.onCompleted: {
-                            // Refresh the text after translations change
-                            languageChanged.connect(valueChanged)
                         }
                     }
 
