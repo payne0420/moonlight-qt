@@ -2470,10 +2470,9 @@ void Session::exec()
                 }
             }
 
-            // Request an IDR frame to complete the reset
-            LiRequestIdrFrame();
-
-            // Request IDR frames for secondary streams
+            // Request IDR frames to complete the reset. Use per-stream requests in
+            // multi-stream mode so resetting one decoder doesn't burst every encoder.
+            LiRequestIdrFrameForStream(0);
             for (int i = 1; i < m_VideoStreams.size(); i++) {
                 if (m_VideoStreams[i].decoder) {
                     LiRequestIdrFrameForStream((uint8_t)i);
