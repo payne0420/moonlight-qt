@@ -42,9 +42,12 @@ typedef struct _DECODER_PARAMETERS {
     int videoFormat;
     int width;
     int height;
+    int textureWidth;
+    int textureHeight;
     int frameRate;
     bool enableVsync;
     bool enableFramePacing;
+    bool enableVideoEnhancement;
     bool testOnly;
 
     // Multi-stream: 0-based index of the video stream this decoder serves. Each
