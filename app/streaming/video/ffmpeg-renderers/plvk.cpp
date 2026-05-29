@@ -624,7 +624,7 @@ bool PlVkRenderer::initialize(PDECODER_PARAMETERS params)
         m_RenderParamsHDR.num_hooks = m_FsrHookHDR ? 1 : 0;
 
         int drawableWidth, drawableHeight;
-        SDL_Metal_GetDrawableSize(m_Window, &drawableWidth, &drawableHeight);
+        SDL_Vulkan_GetDrawableSize(m_Window, &drawableWidth, &drawableHeight);
         m_VideoEnhancement->setRatio(static_cast<float>(drawableHeight) / static_cast<float>(params->height));
 
         m_VideoEnhancement->setAlgo("Shader FSR1");

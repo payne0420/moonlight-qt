@@ -2459,7 +2459,10 @@ void Session::exec()
                                           m_ActiveVideoFrameRate,
                                           secEnableVsync,
                                           secEnableVsync && m_Preferences->framePacing,
-                                          m_Preferences->videoEnhancing,
+                                          // VideoEnhancement is a process-wide singleton; enabling VSR
+                                          // on multiple concurrent streams would clobber its shared
+                                          // device/ratio/algo state. Restrict VSR to the primary stream.
+                                          false,
                                           false,
                                           i,
                                           secDecoder)) {

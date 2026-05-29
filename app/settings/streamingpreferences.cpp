@@ -132,7 +132,7 @@ void StreamingPreferences::reload()
     enableYUV444 = settings.value(SER_YUV444, false).toBool();
     bitrateKbps = settings.value(SER_BITRATE, getDefaultBitrate(width, height, fps, enableYUV444)).toInt();
     unlockBitrate = settings.value(SER_UNLOCK_BITRATE, false).toBool();
-    bitrateMax = settings.value(SER_BITRATE_MAX, 150000).toInt();
+    bitrateMax = settings.value(SER_BITRATE_MAX, 500000).toInt();
     autoAdjustBitrate = settings.value(SER_AUTOADJUSTBITRATE, true).toBool();
     enableVsync = settings.value(SER_VSYNC, true).toBool();
     gameOptimizations = settings.value(SER_GAMEOPTS, true).toBool();
