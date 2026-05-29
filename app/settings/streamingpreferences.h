@@ -126,6 +126,7 @@ public:
     Q_PROPERTY(int fps MEMBER fps NOTIFY displayModeChanged)
     Q_PROPERTY(int bitrateKbps MEMBER bitrateKbps NOTIFY bitrateChanged)
     Q_PROPERTY(bool unlockBitrate MEMBER unlockBitrate NOTIFY unlockBitrateChanged)
+    Q_PROPERTY(int bitrateMax MEMBER bitrateMax NOTIFY bitrateMaxChanged)
     Q_PROPERTY(bool autoAdjustBitrate MEMBER autoAdjustBitrate NOTIFY autoAdjustBitrateChanged)
     Q_PROPERTY(bool enableVsync MEMBER enableVsync NOTIFY enableVsyncChanged)
     Q_PROPERTY(bool gameOptimizations MEMBER gameOptimizations NOTIFY gameOptimizationsChanged)
@@ -171,6 +172,7 @@ public:
     int fps;
     int bitrateKbps;
     bool unlockBitrate;
+    int bitrateMax;
     bool autoAdjustBitrate;
     bool enableVsync;
     bool gameOptimizations;
@@ -213,6 +215,7 @@ signals:
     void displayModeChanged();
     void bitrateChanged();
     void unlockBitrateChanged();
+    void bitrateMaxChanged();
     void autoAdjustBitrateChanged();
     void enableVsyncChanged();
     void gameOptimizationsChanged();

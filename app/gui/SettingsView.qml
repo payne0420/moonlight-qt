@@ -797,9 +797,9 @@ Flickable {
 
                         value: StreamingPreferences.bitrateKbps
 
-                        stepSize: 500
-                        from : 500
-                        to: StreamingPreferences.unlockBitrate ? 500000 : 150000
+                        stepSize: StreamingPreferences.unlockBitrate ? StreamingPreferences.bitrateMax / 200 : 500
+                        from : StreamingPreferences.unlockBitrate ? StreamingPreferences.bitrateMax / 5 : 500
+                        to: StreamingPreferences.unlockBitrate ? StreamingPreferences.bitrateMax : 150000
 
                         snapMode: "SnapOnRelease"
                         width: Math.min(bitrateDesc.implicitWidth, parent.width - (resetBitrateButton.visible ? resetBitrateButton.width + parent.spacing : 0))
@@ -817,7 +817,7 @@ Flickable {
                     Button {
                         id: resetBitrateButton
                         text: qsTr("Use Default (%1 Mbps)").arg(StreamingPreferences.getDefaultBitrate(StreamingPreferences.width, StreamingPreferences.height, StreamingPreferences.fps, StreamingPreferences.enableYUV444) / 1000.0)
-                        visible: StreamingPreferences.bitrateKbps !== StreamingPreferences.getDefaultBitrate(StreamingPreferences.width, StreamingPreferences.height, StreamingPreferences.fps, StreamingPreferences.enableYUV444)
+                        visible: StreamingPreferences.bitrateKbps !== StreamingPreferences.getDefaultBitrate(StreamingPreferences.width, StreamingPreferences.height, StreamingPreferences.fps, StreamingPreferences.enableYUV444) && !StreamingPreferences.unlockBitrate
                         onClicked: {
                             var defaultBitrate = StreamingPreferences.getDefaultBitrate(StreamingPreferences.width, StreamingPreferences.height, StreamingPreferences.fps, StreamingPreferences.enableYUV444)
                             StreamingPreferences.bitrateKbps = defaultBitrate
@@ -1909,23 +1909,59 @@ Flickable {
                                       qsTr("YUV 4:4:4 is not supported on this PC.")
                 }
 
-                CheckBox {
-                    id: unlockBitrate
+                Row {
+                    spacing: 5
                     width: parent.width
-                    text: qsTr("Unlock bitrate limit (Experimental)")
-                    font.pointSize: 12
 
-                    checked: StreamingPreferences.unlockBitrate
-                    onCheckedChanged: {
-                        StreamingPreferences.unlockBitrate = checked
-                        StreamingPreferences.bitrateKbps = Math.min(StreamingPreferences.bitrateKbps, slider.to)
-                        slider.value = StreamingPreferences.bitrateKbps
+                    CheckBox {
+                        id: unlockBitrate
+                        text: qsTr("Unlock bitrate limit (Experimental)")
+                        font.pointSize: 12
+                        hoverEnabled: true
+                        checked: StreamingPreferences.unlockBitrate
+
+                        onCheckedChanged: {
+                            StreamingPreferences.unlockBitrate = checked
+                            StreamingPreferences.bitrateKbps = Math.min(StreamingPreferences.bitrateKbps, StreamingPreferences.bitrateMax)
+                            slider.value = StreamingPreferences.bitrateKbps
+                        }
+
+                        ToolTip.delay: 1000
+                        ToolTip.timeout: 5000
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("This unlocks extremely high video bitrates for use with Sunshine hosts. It should only be used when streaming over an Ethernet LAN connection.")
                     }
 
-                    ToolTip.delay: 1000
-                    ToolTip.timeout: 5000
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("This unlocks extremely high video bitrates for use with Sunshine hosts. It should only be used when streaming over an Ethernet LAN connection.")
+                    AutoResizingComboBox {
+                        id: bitrateMax
+                        enabled: unlockBitrate.checked
+                        textRole: "text"
+                        model: ListModel {
+                            ListElement { text: "500 Mbps"; value: 500000 }
+                            ListElement { text: "1 Gbps"; value: 1000000 }
+                            ListElement { text: "2.5 Gbps"; value: 2500000 }
+                            ListElement { text: "5 Gbps"; value: 5000000 }
+                            ListElement { text: "10 Gbps"; value: 10000000 }
+                            ListElement { text: "25 Gbps"; value: 25000000 }
+                        }
+                        Component.onCompleted: {
+                            // Reflect the saved maximum bitrate selection
+                            for (var i = 0; i < model.count; i++) {
+                                if (model.get(i).value === StreamingPreferences.bitrateMax) {
+                                    currentIndex = i
+                                    break
+                                }
+                            }
+                            recalculateWidth()
+                        }
+                        onActivated: {
+                            if (unlockBitrate.checked) {
+                                StreamingPreferences.bitrateMax = model.get(currentIndex).value
+                                StreamingPreferences.bitrateKbps = Math.min(StreamingPreferences.bitrateKbps, StreamingPreferences.bitrateMax)
+                                slider.value = StreamingPreferences.bitrateKbps
+                            }
+                        }
+                    }
                 }
 
                 CheckBox {
